@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { Layout, Upload, Network, MessageSquare, Database, FileText, Share2, Search, Bot } from 'lucide-react';
+import React, { useState } from 'react';
+import { Layout, Upload, Network, MessageSquare, Database, FileText, Share2, Search, Bot, FileUp, X, Loader2, Image as ImageIcon, FileType2 } from 'lucide-react';
 import { AppView, IngestedDocument, GraphData, Message } from './types';
 import GraphVisualizer from './components/GraphVisualizer';
-import { chunkText, extractGraphFromChunk, generateRAGResponse } from './services/geminiService';
+import { chunkText, extractGraphFromChunk, extractGraphFromMixedContent, generateRAGResponse } from './services/geminiService';
+import { extractContentFromPdf, PdfPage } from './services/pdfService';
 
 const SAMPLE_TEXT = `
 Apple Inc. is an American multinational technology company headquartered in Cupertino, California, that designs, develops, and sells consumer electronics, computer software, and online services. 
@@ -14,96 +15,182 @@ Firebase provides backend services such as Firestore and Authentication.
 `;
 
 const App = () => {
-  // --- STATE (Simulating Firebase & Neo4j) ---
+  // --- STATE ---
   const [currentView, setCurrentView] = useState<AppView>(AppView.USER_CHAT);
   
-  // "Firebase" - Document Store
   const [documents, setDocuments] = useState<IngestedDocument[]>([]);
-  
-  // "Neo4j" - Graph Store
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], links: [] });
   
-  // "Chat" - Message History
   const [messages, setMessages] = useState<Message[]>([
     { role: 'system', content: 'Welcome to the Knowledge Graph Chatbot. Switch to Admin to upload data!', timestamp: Date.now() }
   ]);
   const [inputMessage, setInputMessage] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [processingStatus, setProcessingStatus] = useState('');
+  
+  // Upload State
+  const [uploadMode, setUploadMode] = useState<'text' | 'pdf'>('text');
   const [uploadText, setUploadText] = useState(SAMPLE_TEXT);
+  const [pdfFileName, setPdfFileName] = useState<string>('');
+  
+  // New Hybrid State
+  const [pdfPages, setPdfPages] = useState<PdfPage[]>([]);
+  const [pdfStats, setPdfStats] = useState({ textLen: 0, imgCount: 0 });
+  
+  const [isParsingPdf, setIsParsingPdf] = useState(false);
 
   // --- ACTIONS ---
 
-  // 1. UPLOAD & PROCESS (Simulates Admin Upload -> Chunking -> Extraction)
+  // 1. PDF HANDLING
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setPdfFileName(file.name);
+    setIsParsingPdf(true);
+    setUploadText(''); 
+    setPdfPages([]);
+    setPdfStats({ textLen: 0, imgCount: 0 });
+
+    try {
+        const result = await extractContentFromPdf(file);
+        
+        setPdfPages(result.pages);
+        setPdfStats({
+            textLen: result.totalTextLength,
+            imgCount: result.totalImages
+        });
+
+        // Set preview text for UI consistency
+        if (result.totalTextLength > 0) {
+            const preview = result.pages.filter(p => p.type === 'text').map(p => p.content).join('\n').slice(0, 1000);
+            setUploadText(preview + (preview.length >= 1000 ? '...' : ''));
+        } else {
+             setUploadText(`[Scanned Document] ${result.totalImages} pages extracted as images.`);
+        }
+
+    } catch (error: any) {
+        console.error(error);
+        alert(error.message || "Failed to parse PDF.");
+        setPdfFileName('');
+    } finally {
+        setIsParsingPdf(false);
+    }
+  };
+
+  const clearPdfSelection = () => {
+    setPdfFileName('');
+    setUploadText('');
+    setPdfPages([]);
+    setPdfStats({ textLen: 0, imgCount: 0 });
+  };
+
+  // 2. UPLOAD & PROCESS
   const handleUpload = async () => {
-    if (!uploadText.trim()) return;
+    if (!uploadText && pdfPages.length === 0) return;
     setIsProcessing(true);
+    setProcessingStatus('Initializing ingestion...');
 
     const newDocId = Math.random().toString(36).substr(2, 9);
+    const docName = uploadMode === 'pdf' && pdfFileName ? pdfFileName : `Document ${documents.length + 1}`;
     
-    // Step 1: Chunking (Firebase Function simulation)
-    const chunksRaw = chunkText(uploadText);
-    const chunks = chunksRaw.map(text => ({ id: Math.random().toString(36), text, sourceDoc: newDocId }));
+    let newNodes: any[] = [];
+    let newLinks: any[] = [];
+    let chunks: any[] = [];
+
+    // --- STRATEGY A: PDF (HYBRID) ---
+    if (uploadMode === 'pdf' && pdfPages.length > 0) {
+        
+        // 1. Store Pages as Chunks (for RAG retrieval display)
+        chunks = pdfPages.map(p => ({
+            id: Math.random().toString(36),
+            text: p.type === 'text' ? p.content : `[Image Page ${p.pageNumber}]`,
+            sourceDoc: newDocId
+        }));
+
+        setProcessingStatus(`Processing ${pdfPages.length} pages (Text & Vision mix)...`);
+        
+        // Batch pages to avoid sending massive payloads if PDF is huge
+        // Simple batching: 5 pages per request
+        const BATCH_SIZE = 5;
+        for (let i = 0; i < pdfPages.length; i += BATCH_SIZE) {
+            const batch = pdfPages.slice(i, i + BATCH_SIZE);
+            setProcessingStatus(`Analyzing pages ${i+1}-${Math.min(i+BATCH_SIZE, pdfPages.length)} of ${pdfPages.length}...`);
+            
+            const extracted = await extractGraphFromMixedContent(batch);
+            newNodes = [...newNodes, ...extracted.nodes];
+            newLinks = [...newLinks, ...extracted.links];
+        }
+
+    } 
+    // --- STRATEGY B: RAW TEXT ---
+    else {
+        // Step 1: Chunking
+        const chunksRaw = chunkText(uploadText);
+        chunks = chunksRaw.map(text => ({ id: Math.random().toString(36), text, sourceDoc: newDocId }));
+        
+        // Step 2: Extraction
+        for (let i = 0; i < chunks.length; i++) {
+          setProcessingStatus(`Extracting entities from chunk ${i + 1} of ${chunks.length}...`);
+          const chunk = chunks[i];
+          const extracted = await extractGraphFromChunk(chunk.text);
+          newNodes = [...newNodes, ...extracted.nodes];
+          newLinks = [...newLinks, ...extracted.links];
+        }
+    }
+
+    setProcessingStatus('Finalizing Graph...');
 
     const newDoc: IngestedDocument = {
       id: newDocId,
-      name: `Document ${documents.length + 1}`,
+      name: docName,
       uploadDate: new Date().toLocaleDateString(),
-      status: 'processing',
+      status: 'ready',
       chunks
     };
-
+    
     setDocuments(prev => [...prev, newDoc]);
 
-    // Step 2: Extraction (Building the Graph)
-    let newNodes: any[] = [];
-    let newLinks: any[] = [];
-
-    // Process chunks sequentially to build graph
-    for (const chunk of chunks) {
-      const extracted = await extractGraphFromChunk(chunk.text);
-      newNodes = [...newNodes, ...extracted.nodes];
-      newLinks = [...newLinks, ...extracted.links];
-    }
-
-    // Merge with existing graph (deduplication logic simplified for demo)
+    // Merge with existing graph
     setGraphData(prev => {
-      // Very basic deduplication based on ID
       const allNodes = [...prev.nodes, ...newNodes];
       const allLinks = [...prev.links, ...newLinks];
       
       const uniqueNodes = Array.from(new Map(allNodes.map(item => [item.id.toLowerCase(), item])).values());
-      const uniqueLinks = allLinks; // Links are harder to dedup without complex keys, allowing duplicates for visual density in demo
+      const uniqueLinks = allLinks; 
 
       return { nodes: uniqueNodes, links: uniqueLinks };
     });
 
-    setDocuments(prev => prev.map(d => d.id === newDocId ? { ...d, status: 'ready' } : d));
     setIsProcessing(false);
-    setUploadText('');
+    setProcessingStatus('');
+    
+    if (uploadMode === 'text') {
+        setUploadText('');
+    } else {
+        clearPdfSelection();
+    }
   };
 
-  // 2. RETRIEVER (Simulates searching Neo4j/Vector DB)
+  // 3. RETRIEVER
   const retrieveContext = (query: string): string[] => {
     const queryLower = query.toLowerCase();
     const relevantChunks: string[] = [];
-
-    // Simple keyword matching against graph nodes for the "Graph Retriever" simulation
-    // In a real app, this would be an R-GCN or Vector similarity search
     const hitNodes = graphData.nodes.filter(n => queryLower.includes(n.id.toLowerCase()) || queryLower.includes(n.label.toLowerCase()));
     
-    // Find documents containing these entities (Reverse index simulation)
+    // Graph-based retrieval
     if (hitNodes.length > 0) {
-        // If we found graph nodes, look for chunks that mention them
         documents.forEach(doc => {
             doc.chunks.forEach(chunk => {
-                const chunkLower = chunk.text.toLowerCase();
-                if (hitNodes.some(n => chunkLower.includes(n.id.toLowerCase()))) {
+                if (hitNodes.some(n => chunk.text.toLowerCase().includes(n.id.toLowerCase()))) {
                     relevantChunks.push(chunk.text);
                 }
             });
         });
-    } else {
-        // Fallback: If no specific graph entities found, simplistic text search on chunks
+    } 
+    
+    // Fallback: Text search
+    if (relevantChunks.length === 0) {
          documents.forEach(doc => {
             doc.chunks.forEach(chunk => {
                 if (chunk.text.toLowerCase().includes(queryLower)) {
@@ -112,12 +199,17 @@ const App = () => {
             });
         });
     }
-    
-    // Limit context
+
+    // Fallback: Graph summary if nothing found in text (common for pure image PDFs if OCR was skipped in favor of vision)
+    if (relevantChunks.length === 0) {
+        const relevantNodes = graphData.nodes.slice(0, 50).map(n => n.id).join(", ");
+        if (relevantNodes) relevantChunks.push(`Known Entities in Graph: ${relevantNodes}`);
+    }
+
     return [...new Set(relevantChunks)].slice(0, 3);
   };
 
-  // 3. CHAT (Simulates User -> Retriever -> LLM)
+  // 4. CHAT
   const handleSendMessage = async () => {
     if (!inputMessage.trim()) return;
 
@@ -125,11 +217,9 @@ const App = () => {
     setMessages(prev => [...prev, userMsg]);
     setInputMessage('');
     setIsProcessing(true);
+    setProcessingStatus('Thinking...');
 
-    // Step 1: Retrieve
     const retrievedContext = retrieveContext(inputMessage);
-
-    // Step 2: Generate (Gemini)
     const answer = await generateRAGResponse(inputMessage, retrievedContext);
 
     const botMsg: Message = {
@@ -141,6 +231,7 @@ const App = () => {
 
     setMessages(prev => [...prev, botMsg]);
     setIsProcessing(false);
+    setProcessingStatus('');
   };
 
   return (
@@ -187,8 +278,6 @@ const App = () => {
 
       {/* MAIN CONTENT */}
       <div className="flex-1 overflow-hidden flex flex-col">
-        
-        {/* HEADER */}
         <header className="bg-white h-16 border-b border-gray-200 flex items-center px-8 justify-between shadow-sm">
             <h2 className="text-xl font-semibold text-gray-800">
                 {currentView === AppView.USER_CHAT && "Chatbot Interface"}
@@ -210,29 +299,132 @@ const App = () => {
             {currentView === AppView.ADMIN_UPLOAD && (
                 <div className="max-w-3xl mx-auto space-y-8">
                     <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-                        <h3 className="text-lg font-medium mb-4 flex items-center gap-2">
-                            <FileText className="text-blue-500" /> 
-                            Upload Knowledge Base (PDF/Text)
-                        </h3>
-                        <p className="text-sm text-gray-500 mb-4">
-                            Paste text below (or content extracted from PDF) to ingest into the system. 
-                            The pipeline will Chunk the data, store in Firebase, and perform Extraction for Neo4j.
-                        </p>
-                        <textarea 
-                            className="w-full h-48 p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-none font-mono text-sm"
-                            placeholder="Paste text content here..."
-                            value={uploadText}
-                            onChange={(e) => setUploadText(e.target.value)}
-                        />
-                        <div className="mt-4 flex justify-end">
+                        <div className="flex items-center justify-between mb-6">
+                             <h3 className="text-lg font-medium flex items-center gap-2">
+                                <FileText className="text-blue-500" /> 
+                                Knowledge Base Ingestion
+                            </h3>
+                            <div className="flex bg-gray-100 p-1 rounded-lg text-sm">
+                                <button 
+                                    onClick={() => setUploadMode('text')}
+                                    className={`px-3 py-1.5 rounded-md transition-all ${uploadMode === 'text' ? 'bg-white shadow text-gray-800 font-medium' : 'text-gray-500 hover:text-gray-700'}`}
+                                >
+                                    Raw Text
+                                </button>
+                                <button 
+                                    onClick={() => setUploadMode('pdf')}
+                                    className={`px-3 py-1.5 rounded-md transition-all ${uploadMode === 'pdf' ? 'bg-white shadow text-gray-800 font-medium' : 'text-gray-500 hover:text-gray-700'}`}
+                                >
+                                    PDF Upload
+                                </button>
+                            </div>
+                        </div>
+
+                        {uploadMode === 'text' ? (
+                            <>
+                                <textarea 
+                                    className="w-full h-48 p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-none font-mono text-sm bg-white text-gray-900 placeholder-gray-400"
+                                    placeholder="Paste text content here..."
+                                    value={uploadText}
+                                    onChange={(e) => setUploadText(e.target.value)}
+                                />
+                            </>
+                        ) : (
+                             <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 flex flex-col items-center justify-center text-center hover:bg-gray-50 transition-colors bg-white">
+                                {pdfFileName ? (
+                                    <div className="w-full">
+                                        <div className="flex items-center justify-between bg-blue-50 p-4 rounded-lg border border-blue-100 mb-4">
+                                            <div className="flex items-center gap-3">
+                                                {pdfStats.imgCount > 0 ? (
+                                                    <FileType2 className="text-purple-600" size={24} />
+                                                ) : (
+                                                    <FileText className="text-blue-600" size={24} />
+                                                )}
+                                                <div className="text-left">
+                                                    <div className="font-medium text-blue-900">{pdfFileName}</div>
+                                                    <div className="text-xs text-gray-500 flex items-center gap-2">
+                                                        <span>{pdfStats.textLen > 0 ? `${(pdfStats.textLen / 1000).toFixed(1)}k chars` : 'No text'}</span>
+                                                        <span>•</span>
+                                                        <span>{pdfStats.imgCount} scanned pages</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <button onClick={clearPdfSelection} className="text-blue-400 hover:text-blue-600 p-1">
+                                                <X size={20} />
+                                            </button>
+                                        </div>
+                                        
+                                        {isParsingPdf && (
+                                            <div className="text-sm text-gray-500 animate-pulse">Extracting content from PDF...</div>
+                                        )}
+
+                                        {/* Status Display */}
+                                        {!isParsingPdf && (
+                                            <div className="text-left bg-gray-50 p-3 rounded-lg border border-gray-100 text-xs">
+                                                <div className="font-semibold text-gray-600 mb-2">Content Analysis:</div>
+                                                <div className="grid grid-cols-2 gap-4">
+                                                    <div>
+                                                        <span className="text-gray-400 block">Text Content</span>
+                                                        <span className={`font-medium ${pdfStats.textLen > 0 ? 'text-green-600' : 'text-gray-400'}`}>
+                                                            {pdfStats.textLen > 0 ? 'Detected' : 'Empty'}
+                                                        </span>
+                                                    </div>
+                                                    <div>
+                                                        <span className="text-gray-400 block">Visual Content</span>
+                                                        <span className={`font-medium ${pdfStats.imgCount > 0 ? 'text-purple-600' : 'text-gray-400'}`}>
+                                                            {pdfStats.imgCount > 0 ? `${pdfStats.imgCount} Pages (Gemini Vision)` : 'None'}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                                {uploadText && pdfStats.textLen > 0 && (
+                                                     <div className="mt-3 pt-3 border-t border-gray-200">
+                                                        <p className="text-gray-400 mb-1">Preview:</p>
+                                                        <p className="font-mono text-gray-500 line-clamp-3">{uploadText}</p>
+                                                     </div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <>
+                                        <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mb-4">
+                                            <FileUp size={32} />
+                                        </div>
+                                        <h4 className="font-medium text-gray-900 mb-1">Click to upload PDF</h4>
+                                        <p className="text-sm text-gray-500 mb-4">Supports Text & Scanned Documents</p>
+                                        <input 
+                                            type="file" 
+                                            accept=".pdf"
+                                            onChange={handleFileChange}
+                                            className="block w-full text-sm text-slate-500
+                                            file:mr-4 file:py-2 file:px-4
+                                            file:rounded-full file:border-0
+                                            file:text-sm file:font-semibold
+                                            file:bg-blue-50 file:text-blue-700
+                                            hover:file:bg-blue-100
+                                            mx-auto max-w-xs
+                                            "
+                                        />
+                                    </>
+                                )}
+                             </div>
+                        )}
+
+                        <div className="mt-6 flex justify-end items-center gap-4">
+                             {isProcessing && (
+                                <span className="text-sm text-blue-600 flex items-center gap-2 animate-pulse">
+                                    <Loader2 size={16} className="animate-spin" />
+                                    {processingStatus}
+                                </span>
+                            )}
                             <button 
                                 onClick={handleUpload}
-                                disabled={isProcessing || !uploadText}
+                                disabled={isProcessing || (!uploadText && pdfPages.length === 0) || isParsingPdf}
                                 className={`px-6 py-2 rounded-lg font-medium text-white shadow-sm flex items-center gap-2
-                                    ${isProcessing ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}
+                                    ${(isProcessing || (!uploadText && pdfPages.length === 0) || isParsingPdf) ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}
                                 `}
                             >
-                                {isProcessing ? 'Processing Pipeline...' : 'Ingest & Build Graph'}
+                                {isProcessing ? 'Processing...' : 'Ingest & Build Graph'}
                             </button>
                         </div>
                     </div>
@@ -267,26 +459,9 @@ const App = () => {
                     <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex-1 flex flex-col">
                          <div className="mb-4 flex justify-between items-center">
                             <h3 className="font-medium">Neo4j Visualization</h3>
-                            <div className="text-sm text-gray-500">
-                                Interactive Force-Directed Graph using D3.js
-                            </div>
                          </div>
                          <div className="flex-1 bg-slate-50 rounded-lg overflow-hidden border border-slate-100 relative">
                              <GraphVisualizer data={graphData} />
-                         </div>
-                         <div className="mt-4 grid grid-cols-3 gap-4 text-center">
-                             <div className="p-3 bg-blue-50 rounded-lg">
-                                 <div className="text-2xl font-bold text-blue-600">{graphData.nodes.length}</div>
-                                 <div className="text-xs text-blue-800 uppercase font-semibold">Entities</div>
-                             </div>
-                             <div className="p-3 bg-indigo-50 rounded-lg">
-                                 <div className="text-2xl font-bold text-indigo-600">{graphData.links.length}</div>
-                                 <div className="text-xs text-indigo-800 uppercase font-semibold">Relationships</div>
-                             </div>
-                             <div className="p-3 bg-emerald-50 rounded-lg">
-                                 <div className="text-2xl font-bold text-emerald-600">{documents.length}</div>
-                                 <div className="text-xs text-emerald-800 uppercase font-semibold">Sources</div>
-                             </div>
                          </div>
                     </div>
                 </div>
@@ -299,40 +474,10 @@ const App = () => {
                         {messages.map((msg, idx) => (
                             <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                                 <div className={`max-w-[80%] rounded-2xl p-4 ${msg.role === 'user' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800'}`}>
-                                    {msg.role === 'model' && (
-                                        <div className="flex items-center gap-2 mb-2 text-blue-600 font-semibold text-xs uppercase tracking-wide">
-                                            <Bot size={14} /> AI Assistant
-                                        </div>
-                                    )}
                                     <div className="leading-relaxed whitespace-pre-wrap">{msg.content}</div>
-                                    
-                                    {/* DEBUG: Show Retrieved Context */}
-                                    {msg.retrievedContext && msg.retrievedContext.length > 0 && (
-                                        <div className="mt-4 pt-3 border-t border-gray-200/50">
-                                            <p className="text-[10px] uppercase font-bold text-gray-500 mb-1 flex items-center gap-1">
-                                                <Search size={10} /> Retrieved Context (RAG)
-                                            </p>
-                                            <div className="space-y-1">
-                                                {msg.retrievedContext.map((ctx, cIdx) => (
-                                                    <div key={cIdx} className="text-[10px] bg-white/50 p-1.5 rounded border border-gray-200/50 truncate">
-                                                        "{ctx.substring(0, 100)}..."
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )}
                                 </div>
                             </div>
                         ))}
-                        {isProcessing && (
-                            <div className="flex justify-start">
-                                <div className="bg-gray-100 rounded-2xl p-4 flex items-center gap-2">
-                                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                                </div>
-                            </div>
-                        )}
                     </div>
                     
                     <div className="p-4 bg-gray-50 border-t border-gray-200">
@@ -353,9 +498,6 @@ const App = () => {
                             >
                                 <Share2 className="rotate-90" size={20} />
                             </button>
-                        </div>
-                        <div className="text-center mt-2 text-xs text-gray-400">
-                            Powered by Gemini 2.5 Flash • In-Browser RAG Simulation
                         </div>
                     </div>
                 </div>

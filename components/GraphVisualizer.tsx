@@ -1,5 +1,6 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 import { GraphData, Node, Link } from '../types';
 
 interface GraphVisualizerProps {
@@ -8,6 +9,7 @@ interface GraphVisualizerProps {
 
 const GraphVisualizer: React.FC<GraphVisualizerProps> = ({ data }) => {
   const svgRef = useRef<SVGSVGElement>(null);
+  const [isLegendOpen, setIsLegendOpen] = useState(true);
 
   useEffect(() => {
     if (!svgRef.current || data.nodes.length === 0) return;
@@ -46,11 +48,11 @@ const GraphVisualizer: React.FC<GraphVisualizerProps> = ({ data }) => {
       .attr("markerHeight", 6)
       .attr("orient", "auto")
       .append("path")
-      .attr("fill", "#999")
+      .attr("fill", "#9ca3af") // Gray-400
       .attr("d", "M0,-5L10,0L0,5");
 
     const link = svg.append("g")
-      .attr("stroke", "#999")
+      .attr("stroke", "#9ca3af")
       .attr("stroke-opacity", 0.6)
       .selectAll("line")
       .data(links)
@@ -66,7 +68,7 @@ const GraphVisualizer: React.FC<GraphVisualizerProps> = ({ data }) => {
         .enter().append("text")
         .attr("font-family", "sans-serif")
         .attr("font-size", "10px")
-        .attr("fill", "#666")
+        .attr("fill", "#4b5563") // Gray-600
         .attr("text-anchor", "middle")
         .text((d: any) => d.type);
 
@@ -89,11 +91,17 @@ const GraphVisualizer: React.FC<GraphVisualizerProps> = ({ data }) => {
     node.append("title")
       .text((d: any) => d.id);
 
-    node.append("text")
+    // Node labels with halo for better visibility
+    const labels = node.append("text")
       .attr("x", 12)
       .attr("y", "0.31em")
       .text((d: any) => d.id)
-      .clone(true).lower()
+      .attr("fill", "#111827") // Dark gray/black for main text
+      .attr("font-size", "12px")
+      .attr("font-weight", "500");
+
+    // Add white halo to text
+    labels.clone(true).lower()
       .attr("fill", "none")
       .attr("stroke", "white")
       .attr("stroke-width", 3);
@@ -135,18 +143,42 @@ const GraphVisualizer: React.FC<GraphVisualizerProps> = ({ data }) => {
     };
   }, [data]);
 
+  const uniqueLabels = [...new Set(data.nodes.map(n => n.label))];
+  const colorScale = d3.scaleOrdinal(d3.schemeCategory10);
+
   return (
-    <div className="w-full h-[600px] border border-gray-200 rounded-lg overflow-hidden bg-slate-50 relative">
-        <div className="absolute top-2 right-2 z-10 bg-white/80 p-2 text-xs rounded shadow">
-             <div className="font-bold mb-1">Graph Legend</div>
-             {data.nodes.length === 0 && <span className="text-gray-500">No data loaded</span>}
-             <div className="flex flex-wrap gap-2">
-                {[...new Set(data.nodes.map(n => n.label))].map((label, i) => (
-                    <span key={label} className="px-1 rounded border" style={{ borderColor: d3.schemeCategory10[i % 10] }}>{label}</span>
-                ))}
-             </div>
+    <div className="w-full h-[600px] border border-gray-200 rounded-lg overflow-hidden bg-white relative">
+        <div className="absolute top-2 right-2 z-10 bg-white/95 backdrop-blur-sm p-3 rounded-lg shadow-md border border-gray-200 max-w-[200px] transition-all">
+             <button 
+                onClick={() => setIsLegendOpen(!isLegendOpen)}
+                className="flex items-center justify-between w-full text-xs font-bold text-gray-700 hover:text-blue-600 transition-colors"
+             >
+                <span className="uppercase tracking-wider">Graph Legend</span>
+                {isLegendOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+             </button>
+             
+             {isLegendOpen && (
+                <div className="mt-3 space-y-2 max-h-[200px] overflow-y-auto custom-scrollbar">
+                    {data.nodes.length === 0 && <span className="text-gray-400 text-xs italic">No data loaded</span>}
+                    <div className="flex flex-wrap gap-2">
+                        {uniqueLabels.map((label, i) => (
+                            <span 
+                                key={label} 
+                                className="px-2 py-1 rounded-md border text-[10px] font-medium flex items-center gap-1.5 bg-gray-50 text-gray-700"
+                                style={{ borderColor: colorScale(label) as string }}
+                            >
+                                <span 
+                                    className="w-2 h-2 rounded-full" 
+                                    style={{ backgroundColor: colorScale(label) as string }}
+                                />
+                                {label}
+                            </span>
+                        ))}
+                    </div>
+                </div>
+             )}
         </div>
-      <svg ref={svgRef} className="w-full h-full"></svg>
+      <svg ref={svgRef} className="w-full h-full block"></svg>
     </div>
   );
 };
