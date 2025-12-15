@@ -1,13 +1,17 @@
 import * as pdfjsLib from 'pdfjs-dist';
 
+// Vite-specific import to bundle the worker locally.
+// The '?url' suffix tells Vite to treat this import as a static asset URL.
+// @ts-ignore - Ignores TS error if module definition for ?url is missing
+import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.js?url';
+
 // Handle CJS/ESM interop
 const pdfjs = (pdfjsLib as any).default || pdfjsLib;
 
-// Configure worker to load from the remote CDN to match the import map.
-// This avoids issues with relative path resolution in environments where
-// node_modules are not locally served or import.meta.url is not robust.
+// Configure worker to use the local bundle processed by Vite.
+// This works in both dev (npm run dev) and production (npm run build).
 if (pdfjs && typeof window !== 'undefined') {
-  pdfjs.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+  pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
 }
 
 export interface PdfPage {
@@ -26,11 +30,12 @@ export const extractContentFromPdf = async (file: File): Promise<ProcessedPdf> =
   try {
     const arrayBuffer = await file.arrayBuffer();
     
-    // Load Document with CMaps (Crucial for handling special fonts/characters without crashing)
+    // Load Document
+    // Note: cMaps are not configured here to avoid external CDNs. 
+    // If you need support for complex non-Latin fonts, copy 'pdfjs-dist/cmaps/' 
+    // to your 'public/cmaps/' directory and set `cMapUrl: '/cmaps/', cMapPacked: true`.
     const loadingTask = pdfjs.getDocument({
       data: arrayBuffer,
-      cMapUrl: 'https://esm.sh/pdfjs-dist@3.11.174/cmaps/',
-      cMapPacked: true,
     });
     
     const pdf = await loadingTask.promise;
@@ -95,7 +100,7 @@ export const extractContentFromPdf = async (file: File): Promise<ProcessedPdf> =
     let msg = "Failed to process PDF.";
     if (error.name === 'PasswordException') msg = "The PDF is password protected.";
     if (error.name === 'InvalidPDFException') msg = "The file is not a valid PDF.";
-    if (error.message && error.message.includes('worker')) msg = "PDF Worker failed to load. Please check your internet connection.";
+    if (error.message && error.message.includes('worker')) msg = "PDF Worker failed to load.";
     
     throw new Error(msg);
   }
