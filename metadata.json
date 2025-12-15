@@ -1,0 +1,5 @@
+{
+  "name": "CompTIA Security Plus Chatbot",
+  "description": "A Knowledge Graph RAG chatbot architecture demo using Gemini 2.5 Flash. Simulates PDF ingestion, Graph Extraction (Neo4j), and Retrieval Augmented Generation.",
+  "requestFramePermissions": []
+}
