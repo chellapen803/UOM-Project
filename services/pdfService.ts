@@ -3,15 +3,6 @@ import * as pdfjsLib from 'pdfjs-dist';
 // Handle CJS/ESM interop
 const pdfjs = (pdfjsLib as any).default || pdfjsLib;
 
-// "Best of both worlds" Solution:
-// Use a Blob proxy to load the worker from the CDN.
-// This resolves "Uncaught NetworkError" caused by Cross-Origin Worker restrictions.
-if (pdfjs && typeof window !== 'undefined') {
-  const workerUrl = 'https://esm.sh/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
-  const blob = new Blob([`importScripts('${workerUrl}');`], { type: 'application/javascript' });
-  pdfjs.GlobalWorkerOptions.workerSrc = URL.createObjectURL(blob);
-}
-
 export interface PdfPage {
   pageNumber: number;
   type: 'text' | 'image';
@@ -24,7 +15,52 @@ export interface ProcessedPdf {
   totalImages: number;
 }
 
+// Singleton promise to ensure worker is only set up once
+let workerSetupPromise: Promise<void> | null = null;
+
+const setupPdfWorker = async () => {
+  if (typeof window === 'undefined' || !pdfjs) return;
+  
+  // Safety check: ensure GlobalWorkerOptions exists
+  if (!pdfjs.GlobalWorkerOptions) {
+      console.warn("pdfjs.GlobalWorkerOptions is undefined, skipping worker setup");
+      return;
+  }
+  
+  // If workerSrc is already set (e.g. by another component), skip
+  if (pdfjs.GlobalWorkerOptions.workerSrc) return;
+
+  const workerUrl = 'https://esm.sh/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+
+  try {
+    // STRATEGY 1: Fetch the worker code directly and create a Blob.
+    // This bypasses 'importScripts' CORS restrictions because the code effectively becomes local (blob: origin).
+    const response = await fetch(workerUrl);
+    if (!response.ok) {
+        throw new Error(`Failed to fetch worker script: ${response.statusText}`);
+    }
+    const workerScript = await response.text();
+    const blob = new Blob([workerScript], { type: 'text/javascript' });
+    pdfjs.GlobalWorkerOptions.workerSrc = URL.createObjectURL(blob);
+    console.log("PDF Worker loaded via direct fetch blob.");
+  } catch (fetchError) {
+    console.warn("Direct fetch for PDF worker failed, falling back to importScripts shim.", fetchError);
+    
+    // STRATEGY 2: Fallback to importScripts shim. 
+    // This relies on the browser allowing importScripts from blob to CDN.
+    // Requires correct CSP: worker-src blob:; connect-src https://esm.sh;
+    const blob = new Blob([`importScripts('${workerUrl}');`], { type: 'application/javascript' });
+    pdfjs.GlobalWorkerOptions.workerSrc = URL.createObjectURL(blob);
+  }
+};
+
 export const extractContentFromPdf = async (file: File): Promise<ProcessedPdf> => {
+  // Ensure worker is set up before we start
+  if (!workerSetupPromise) {
+    workerSetupPromise = setupPdfWorker();
+  }
+  await workerSetupPromise;
+
   try {
     const arrayBuffer = await file.arrayBuffer();
     
@@ -99,7 +135,7 @@ export const extractContentFromPdf = async (file: File): Promise<ProcessedPdf> =
     let msg = "Failed to process PDF.";
     if (error.name === 'PasswordException') msg = "The PDF is password protected.";
     if (error.name === 'InvalidPDFException') msg = "The file is not a valid PDF.";
-    if (error.message && error.message.includes('worker')) msg = "PDF Worker failed to load. Please check your internet connection.";
+    if (error.message && error.message.includes('worker')) msg = "PDF Worker failed to load. Please check your internet connection and reload.";
     
     throw new Error(msg);
   }
