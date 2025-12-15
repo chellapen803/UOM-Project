@@ -3,9 +3,10 @@ import * as pdfjsLib from 'pdfjs-dist';
 // Handle CJS/ESM interop
 const pdfjs = (pdfjsLib as any).default || pdfjsLib;
 
-// Configure worker with a specific version to match the library
-// Using a check to prevent overwriting if already set
-if (pdfjs && typeof window !== 'undefined' && !pdfjs.GlobalWorkerOptions.workerSrc) {
+// Configure worker to load from the remote CDN to match the import map.
+// This avoids issues with relative path resolution in environments where
+// node_modules are not locally served or import.meta.url is not robust.
+if (pdfjs && typeof window !== 'undefined') {
   pdfjs.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
 }
 
