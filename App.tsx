@@ -1,9 +1,18 @@
-import React, { useState } from 'react';
-import { Layout, Upload, Network, MessageSquare, Database, FileText, Share2, Search, Bot, FileUp, X, Loader2, Image as ImageIcon, FileType2 } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { 
+  Layout, Upload, Network, MessageSquare, Database, FileText, Share2, 
+  Search, Bot, FileUp, X, Loader2, Image as ImageIcon, FileType2, 
+  Send, User, Settings, CheckCircle2, AlertCircle 
+} from 'lucide-react';
 import { AppView, IngestedDocument, GraphData, Message } from './types';
 import GraphVisualizer from './components/GraphVisualizer';
 import { chunkText, extractGraphFromChunk, extractGraphFromMixedContent, generateRAGResponse } from './services/geminiService';
 import { extractContentFromPdf, PdfPage } from './services/pdfService';
+import { 
+  Button, Input, Textarea, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter,
+  Badge, Label, Alert, AlertTitle, AlertDescription 
+} from './components/ui';
+import { cn } from './lib/utils';
 
 const SAMPLE_TEXT = `
 Apple Inc. is an American multinational technology company headquartered in Cupertino, California, that designs, develops, and sells consumer electronics, computer software, and online services. 
@@ -22,7 +31,7 @@ const App = () => {
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], links: [] });
   
   const [messages, setMessages] = useState<Message[]>([
-    { role: 'system', content: 'Welcome to the Knowledge Graph Chatbot. Switch to Admin to upload data!', timestamp: Date.now() }
+    { role: 'system', content: 'Welcome to the Knowledge Graph Chatbot. I can answer questions based on the documents you upload.', timestamp: Date.now() }
   ]);
   const [inputMessage, setInputMessage] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -38,6 +47,14 @@ const App = () => {
   const [pdfStats, setPdfStats] = useState({ textLen: 0, imgCount: 0 });
   
   const [isParsingPdf, setIsParsingPdf] = useState(false);
+  
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages]);
 
   // --- ACTIONS ---
 
@@ -61,7 +78,6 @@ const App = () => {
             imgCount: result.totalImages
         });
 
-        // Set preview text for UI consistency
         if (result.totalTextLength > 0) {
             const preview = result.pages.filter(p => p.type === 'text').map(p => p.content).join('\n').slice(0, 1000);
             setUploadText(preview + (preview.length >= 1000 ? '...' : ''));
@@ -100,8 +116,6 @@ const App = () => {
 
     // --- STRATEGY A: PDF (HYBRID) ---
     if (uploadMode === 'pdf' && pdfPages.length > 0) {
-        
-        // 1. Store Pages as Chunks (for RAG retrieval display)
         chunks = pdfPages.map(p => ({
             id: Math.random().toString(36),
             text: p.type === 'text' ? p.content : `[Image Page ${p.pageNumber}]`,
@@ -110,8 +124,6 @@ const App = () => {
 
         setProcessingStatus(`Processing ${pdfPages.length} pages (Text & Vision mix)...`);
         
-        // Batch pages to avoid sending massive payloads if PDF is huge
-        // Simple batching: 5 pages per request
         const BATCH_SIZE = 5;
         for (let i = 0; i < pdfPages.length; i += BATCH_SIZE) {
             const batch = pdfPages.slice(i, i + BATCH_SIZE);
@@ -125,11 +137,9 @@ const App = () => {
     } 
     // --- STRATEGY B: RAW TEXT ---
     else {
-        // Step 1: Chunking
         const chunksRaw = chunkText(uploadText);
         chunks = chunksRaw.map(text => ({ id: Math.random().toString(36), text, sourceDoc: newDocId }));
         
-        // Step 2: Extraction
         for (let i = 0; i < chunks.length; i++) {
           setProcessingStatus(`Extracting entities from chunk ${i + 1} of ${chunks.length}...`);
           const chunk = chunks[i];
@@ -151,7 +161,6 @@ const App = () => {
     
     setDocuments(prev => [...prev, newDoc]);
 
-    // Merge with existing graph
     setGraphData(prev => {
       const allNodes = [...prev.nodes, ...newNodes];
       const allLinks = [...prev.links, ...newLinks];
@@ -178,7 +187,6 @@ const App = () => {
     const relevantChunks: string[] = [];
     const hitNodes = graphData.nodes.filter(n => queryLower.includes(n.id.toLowerCase()) || queryLower.includes(n.label.toLowerCase()));
     
-    // Graph-based retrieval
     if (hitNodes.length > 0) {
         documents.forEach(doc => {
             doc.chunks.forEach(chunk => {
@@ -189,7 +197,6 @@ const App = () => {
         });
     } 
     
-    // Fallback: Text search
     if (relevantChunks.length === 0) {
          documents.forEach(doc => {
             doc.chunks.forEach(chunk => {
@@ -200,7 +207,6 @@ const App = () => {
         });
     }
 
-    // Fallback: Graph summary if nothing found in text (common for pure image PDFs if OCR was skipped in favor of vision)
     if (relevantChunks.length === 0) {
         const relevantNodes = graphData.nodes.slice(0, 50).map(n => n.id).join(", ");
         if (relevantNodes) relevantChunks.push(`Known Entities in Graph: ${relevantNodes}`);
@@ -234,276 +240,325 @@ const App = () => {
     setProcessingStatus('');
   };
 
+  const NavItem = ({ view, icon: Icon, label }: { view: AppView; icon: any; label: string }) => (
+    <Button
+      variant={currentView === view ? "secondary" : "ghost"}
+      className={cn("w-full justify-start gap-2", currentView === view ? "bg-slate-200" : "text-slate-400 hover:text-slate-100 hover:bg-slate-800")}
+      onClick={() => setCurrentView(view)}
+    >
+      <Icon size={18} />
+      {label}
+    </Button>
+  );
+
   return (
-    <div className="flex h-screen bg-gray-100 font-sans text-slate-800">
+    <div className="flex h-screen bg-slate-50 font-sans text-slate-900">
       
       {/* SIDEBAR */}
-      <div className="w-64 bg-slate-900 text-white flex flex-col shadow-xl">
-        <div className="p-6 border-b border-slate-700">
-            <h1 className="text-xl font-bold flex items-center gap-2">
-                <Share2 className="text-blue-400" /> NeuroGraph
-            </h1>
-            <p className="text-xs text-slate-400 mt-1">Firebase + Neo4j Architecture</p>
+      <aside className="w-64 bg-slate-950 text-slate-50 flex flex-col border-r border-slate-800">
+        <div className="p-6">
+          <div className="flex items-center gap-2 font-bold text-xl tracking-tight">
+            <div className="bg-blue-600 p-1.5 rounded-lg">
+                <Share2 className="text-white h-5 w-5" />
+            </div>
+            NeuroGraph
+          </div>
+          <p className="text-xs text-slate-500 mt-2 font-medium">Knowledge Graph RAG</p>
         </div>
         
-        <nav className="flex-1 p-4 space-y-2">
-            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">User Zone</div>
-            <button 
-                onClick={() => setCurrentView(AppView.USER_CHAT)}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${currentView === AppView.USER_CHAT ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 text-slate-300'}`}
-            >
-                <MessageSquare size={18} /> Chat Interface
-            </button>
-
-            <div className="mt-8 text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Admin Zone</div>
-            <button 
-                onClick={() => setCurrentView(AppView.ADMIN_UPLOAD)}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${currentView === AppView.ADMIN_UPLOAD ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 text-slate-300'}`}
-            >
-                <Upload size={18} /> Upload & Process
-            </button>
-            <button 
-                onClick={() => setCurrentView(AppView.ADMIN_GRAPH)}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${currentView === AppView.ADMIN_GRAPH ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 text-slate-300'}`}
-            >
-                <Network size={18} /> Knowledge Graph
-            </button>
+        <nav className="flex-1 px-3 space-y-1">
+          <div className="px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Workspace</div>
+          <NavItem view={AppView.USER_CHAT} icon={MessageSquare} label="Chat" />
+          
+          <div className="mt-8 px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Admin</div>
+          <NavItem view={AppView.ADMIN_UPLOAD} icon={Upload} label="Ingest Data" />
+          <NavItem view={AppView.ADMIN_GRAPH} icon={Network} label="Graph View" />
         </nav>
 
-        <div className="p-4 border-t border-slate-700 text-xs text-slate-500">
-            <div>Engine: Gemini 2.5 Flash</div>
-            <div>Store: Simulated (Local)</div>
+        <div className="p-4 bg-slate-900 m-3 rounded-lg border border-slate-800">
+            <div className="flex items-center gap-2 mb-2">
+                <Database className="text-blue-500" size={14} />
+                <span className="text-xs font-medium text-slate-300">Storage</span>
+            </div>
+            <div className="flex justify-between text-xs text-slate-500 mb-1">
+                <span>Docs</span>
+                <span>{documents.length}</span>
+            </div>
+            <div className="flex justify-between text-xs text-slate-500">
+                <span>Nodes</span>
+                <span>{graphData.nodes.length}</span>
+            </div>
         </div>
-      </div>
+      </aside>
 
       {/* MAIN CONTENT */}
-      <div className="flex-1 overflow-hidden flex flex-col">
-        <header className="bg-white h-16 border-b border-gray-200 flex items-center px-8 justify-between shadow-sm">
-            <h2 className="text-xl font-semibold text-gray-800">
-                {currentView === AppView.USER_CHAT && "Chatbot Interface"}
-                {currentView === AppView.ADMIN_UPLOAD && "Admin: Data Ingestion"}
-                {currentView === AppView.ADMIN_GRAPH && "Admin: Graph Explorer (Neo4j View)"}
-            </h2>
-            <div className="flex items-center gap-2 text-sm text-gray-500">
-                <Database size={16} />
-                <span>{documents.length} Docs</span>
-                <span className="mx-2">|</span>
-                <Share2 size={16} />
-                <span>{graphData.nodes.length} Nodes</span>
-            </div>
-        </header>
+      <main className="flex-1 flex flex-col h-full overflow-hidden relative">
+        
+        {/* VIEW: UPLOAD */}
+        {currentView === AppView.ADMIN_UPLOAD && (
+          <div className="flex-1 overflow-y-auto p-8">
+            <div className="max-w-4xl mx-auto space-y-6">
+                <div>
+                    <h2 className="text-3xl font-bold tracking-tight">Ingest Data</h2>
+                    <p className="text-slate-500">Upload documents to build your knowledge graph.</p>
+                </div>
 
-        <main className="flex-1 overflow-y-auto p-8">
-            
-            {/* VIEW: UPLOAD */}
-            {currentView === AppView.ADMIN_UPLOAD && (
-                <div className="max-w-3xl mx-auto space-y-8">
-                    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-                        <div className="flex items-center justify-between mb-6">
-                             <h3 className="text-lg font-medium flex items-center gap-2">
-                                <FileText className="text-blue-500" /> 
-                                Knowledge Base Ingestion
-                            </h3>
-                            <div className="flex bg-gray-100 p-1 rounded-lg text-sm">
-                                <button 
-                                    onClick={() => setUploadMode('text')}
-                                    className={`px-3 py-1.5 rounded-md transition-all ${uploadMode === 'text' ? 'bg-white shadow text-gray-800 font-medium' : 'text-gray-500 hover:text-gray-700'}`}
-                                >
-                                    Raw Text
-                                </button>
-                                <button 
-                                    onClick={() => setUploadMode('pdf')}
-                                    className={`px-3 py-1.5 rounded-md transition-all ${uploadMode === 'pdf' ? 'bg-white shadow text-gray-800 font-medium' : 'text-gray-500 hover:text-gray-700'}`}
-                                >
-                                    PDF Upload
-                                </button>
-                            </div>
-                        </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <Card className="md:col-span-2">
+                        <CardHeader>
+                            <CardTitle className="text-lg">Upload Content</CardTitle>
+                            <CardDescription>Supported formats: Plain Text, PDF (OCR/Vision)</CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="space-y-4">
+                                <div className="flex p-1 bg-slate-100 rounded-lg w-fit">
+                                    <button 
+                                        onClick={() => setUploadMode('text')}
+                                        className={cn("px-4 py-1.5 text-sm font-medium rounded-md transition-all", uploadMode === 'text' ? "bg-white shadow-sm text-slate-900" : "text-slate-500 hover:text-slate-900")}
+                                    >
+                                        Raw Text
+                                    </button>
+                                    <button 
+                                        onClick={() => setUploadMode('pdf')}
+                                        className={cn("px-4 py-1.5 text-sm font-medium rounded-md transition-all", uploadMode === 'pdf' ? "bg-white shadow-sm text-slate-900" : "text-slate-500 hover:text-slate-900")}
+                                    >
+                                        PDF Document
+                                    </button>
+                                </div>
 
-                        {uploadMode === 'text' ? (
-                            <>
-                                <textarea 
-                                    className="w-full h-48 p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-none font-mono text-sm bg-white text-gray-900 placeholder-gray-400"
-                                    placeholder="Paste text content here..."
-                                    value={uploadText}
-                                    onChange={(e) => setUploadText(e.target.value)}
-                                />
-                            </>
-                        ) : (
-                             <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 flex flex-col items-center justify-center text-center hover:bg-gray-50 transition-colors bg-white">
-                                {pdfFileName ? (
-                                    <div className="w-full">
-                                        <div className="flex items-center justify-between bg-blue-50 p-4 rounded-lg border border-blue-100 mb-4">
-                                            <div className="flex items-center gap-3">
-                                                {pdfStats.imgCount > 0 ? (
-                                                    <FileType2 className="text-purple-600" size={24} />
-                                                ) : (
-                                                    <FileText className="text-blue-600" size={24} />
-                                                )}
-                                                <div className="text-left">
-                                                    <div className="font-medium text-blue-900">{pdfFileName}</div>
-                                                    <div className="text-xs text-gray-500 flex items-center gap-2">
-                                                        <span>{pdfStats.textLen > 0 ? `${(pdfStats.textLen / 1000).toFixed(1)}k chars` : 'No text'}</span>
-                                                        <span>•</span>
-                                                        <span>{pdfStats.imgCount} scanned pages</span>
+                                {uploadMode === 'text' ? (
+                                    <Textarea 
+                                        placeholder="Paste your knowledge base content here..."
+                                        className="h-64 font-mono text-sm"
+                                        value={uploadText}
+                                        onChange={(e) => setUploadText(e.target.value)}
+                                    />
+                                ) : (
+                                    <div className="border-2 border-dashed border-slate-200 rounded-lg p-10 flex flex-col items-center justify-center text-center hover:bg-slate-50/50 transition-colors">
+                                        {pdfFileName ? (
+                                            <div className="w-full max-w-sm">
+                                                <div className="flex items-center gap-3 p-3 bg-blue-50 border border-blue-100 rounded-lg">
+                                                    <div className="h-10 w-10 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                                                        <FileText className="text-blue-600" size={20} />
                                                     </div>
+                                                    <div className="flex-1 min-w-0 text-left">
+                                                        <p className="text-sm font-medium text-blue-900 truncate">{pdfFileName}</p>
+                                                        <p className="text-xs text-blue-700">
+                                                            {pdfStats.imgCount > 0 ? `${pdfStats.imgCount} pages` : 'Text only'}
+                                                        </p>
+                                                    </div>
+                                                    <Button variant="ghost" size="icon" onClick={clearPdfSelection} className="h-8 w-8 text-blue-500 hover:text-blue-700 hover:bg-blue-100">
+                                                        <X size={16} />
+                                                    </Button>
                                                 </div>
                                             </div>
-                                            <button onClick={clearPdfSelection} className="text-blue-400 hover:text-blue-600 p-1">
-                                                <X size={20} />
-                                            </button>
-                                        </div>
-                                        
-                                        {isParsingPdf && (
-                                            <div className="text-sm text-gray-500 animate-pulse">Extracting content from PDF...</div>
-                                        )}
-
-                                        {/* Status Display */}
-                                        {!isParsingPdf && (
-                                            <div className="text-left bg-gray-50 p-3 rounded-lg border border-gray-100 text-xs">
-                                                <div className="font-semibold text-gray-600 mb-2">Content Analysis:</div>
-                                                <div className="grid grid-cols-2 gap-4">
-                                                    <div>
-                                                        <span className="text-gray-400 block">Text Content</span>
-                                                        <span className={`font-medium ${pdfStats.textLen > 0 ? 'text-green-600' : 'text-gray-400'}`}>
-                                                            {pdfStats.textLen > 0 ? 'Detected' : 'Empty'}
-                                                        </span>
-                                                    </div>
-                                                    <div>
-                                                        <span className="text-gray-400 block">Visual Content</span>
-                                                        <span className={`font-medium ${pdfStats.imgCount > 0 ? 'text-purple-600' : 'text-gray-400'}`}>
-                                                            {pdfStats.imgCount > 0 ? `${pdfStats.imgCount} Pages (Gemini Vision)` : 'None'}
-                                                        </span>
-                                                    </div>
+                                        ) : (
+                                            <>
+                                                <div className="h-12 w-12 bg-slate-100 rounded-full flex items-center justify-center mb-4 text-slate-500">
+                                                    <Upload size={24} />
                                                 </div>
-                                                {uploadText && pdfStats.textLen > 0 && (
-                                                     <div className="mt-3 pt-3 border-t border-gray-200">
-                                                        <p className="text-gray-400 mb-1">Preview:</p>
-                                                        <p className="font-mono text-gray-500 line-clamp-3">{uploadText}</p>
-                                                     </div>
-                                                )}
-                                            </div>
+                                                <h3 className="font-semibold text-slate-900">Click to upload PDF</h3>
+                                                <p className="text-sm text-slate-500 mt-1 mb-4">Max file size 10MB</p>
+                                                <Input 
+                                                    type="file" 
+                                                    accept=".pdf"
+                                                    onChange={handleFileChange}
+                                                    className="max-w-xs cursor-pointer"
+                                                />
+                                            </>
                                         )}
                                     </div>
-                                ) : (
-                                    <>
-                                        <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mb-4">
-                                            <FileUp size={32} />
-                                        </div>
-                                        <h4 className="font-medium text-gray-900 mb-1">Click to upload PDF</h4>
-                                        <p className="text-sm text-gray-500 mb-4">Supports Text & Scanned Documents</p>
-                                        <input 
-                                            type="file" 
-                                            accept=".pdf"
-                                            onChange={handleFileChange}
-                                            className="block w-full text-sm text-slate-500
-                                            file:mr-4 file:py-2 file:px-4
-                                            file:rounded-full file:border-0
-                                            file:text-sm file:font-semibold
-                                            file:bg-blue-50 file:text-blue-700
-                                            hover:file:bg-blue-100
-                                            mx-auto max-w-xs
-                                            "
-                                        />
-                                    </>
                                 )}
-                             </div>
-                        )}
-
-                        <div className="mt-6 flex justify-end items-center gap-4">
+                            </div>
+                        </CardContent>
+                        <CardFooter className="justify-end gap-3 border-t bg-slate-50/50 p-4">
                              {isProcessing && (
-                                <span className="text-sm text-blue-600 flex items-center gap-2 animate-pulse">
-                                    <Loader2 size={16} className="animate-spin" />
+                                <div className="flex items-center gap-2 text-sm text-slate-500 mr-2">
+                                    <Loader2 size={14} className="animate-spin" />
                                     {processingStatus}
-                                </span>
+                                </div>
                             )}
-                            <button 
-                                onClick={handleUpload}
+                            <Button 
+                                onClick={handleUpload} 
                                 disabled={isProcessing || (!uploadText && pdfPages.length === 0) || isParsingPdf}
-                                className={`px-6 py-2 rounded-lg font-medium text-white shadow-sm flex items-center gap-2
-                                    ${(isProcessing || (!uploadText && pdfPages.length === 0) || isParsingPdf) ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}
-                                `}
                             >
                                 {isProcessing ? 'Processing...' : 'Ingest & Build Graph'}
-                            </button>
-                        </div>
-                    </div>
+                            </Button>
+                        </CardFooter>
+                    </Card>
 
-                    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-                        <h3 className="text-lg font-medium mb-4">Ingestion Pipeline Status</h3>
-                        {documents.length === 0 ? (
-                            <div className="text-center py-8 text-gray-400">No documents processed yet.</div>
-                        ) : (
-                            <div className="space-y-3">
+                    <div className="space-y-6">
+                        <Card>
+                            <CardHeader>
+                                <CardTitle className="text-base">Processing Queue</CardTitle>
+                            </CardHeader>
+                            <CardContent className="space-y-3">
+                                {documents.length === 0 && (
+                                    <div className="text-sm text-slate-400 text-center py-4">No documents yet</div>
+                                )}
                                 {documents.map((doc) => (
-                                    <div key={doc.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-100">
-                                        <div className="flex items-center gap-3">
-                                            <div className={`w-2 h-2 rounded-full ${doc.status === 'ready' ? 'bg-green-500' : 'bg-yellow-500 animate-pulse'}`} />
-                                            <span className="font-medium text-gray-700">{doc.name}</span>
-                                            <span className="text-xs text-gray-400">ID: {doc.id}</span>
+                                    <div key={doc.id} className="flex items-center justify-between text-sm group">
+                                        <div className="flex items-center gap-2 overflow-hidden">
+                                            <div className={cn("h-2 w-2 rounded-full flex-shrink-0", doc.status === 'ready' ? "bg-green-500" : "bg-yellow-500")} />
+                                            <span className="truncate font-medium text-slate-700">{doc.name}</span>
                                         </div>
-                                        <div className="text-xs bg-white px-2 py-1 rounded border border-gray-200 text-gray-500">
-                                            {doc.chunks.length} Chunks
-                                        </div>
+                                        <Badge variant="secondary" className="text-xs font-normal">
+                                            {doc.chunks.length} chunks
+                                        </Badge>
                                     </div>
                                 ))}
+                            </CardContent>
+                        </Card>
+
+                         <Alert>
+                            <AlertCircle className="h-4 w-4" />
+                            <AlertTitle>Did you know?</AlertTitle>
+                            <AlertDescription>
+                                This tool uses Gemini 2.5 Flash for high-speed graph extraction from both text and images.
+                            </AlertDescription>
+                        </Alert>
+                    </div>
+                </div>
+            </div>
+          </div>
+        )}
+
+        {/* VIEW: GRAPH */}
+        {currentView === AppView.ADMIN_GRAPH && (
+            <div className="flex-1 flex flex-col h-full bg-slate-50">
+                 <header className="h-16 border-b bg-white px-6 flex items-center justify-between">
+                    <h2 className="font-semibold flex items-center gap-2">
+                        <Network className="text-blue-600" size={20} />
+                        Graph Visualization
+                    </h2>
+                    <div className="flex items-center gap-2">
+                        <Badge variant="outline">{graphData.nodes.length} Nodes</Badge>
+                        <Badge variant="outline">{graphData.links.length} Relationships</Badge>
+                    </div>
+                 </header>
+                 <div className="flex-1 p-6 overflow-hidden">
+                    <Card className="h-full flex flex-col overflow-hidden shadow-sm">
+                        <div className="flex-1 bg-white relative">
+                            <GraphVisualizer data={graphData} />
+                        </div>
+                    </Card>
+                 </div>
+            </div>
+        )}
+
+        {/* VIEW: CHAT */}
+        {currentView === AppView.USER_CHAT && (
+            <div className="flex flex-col h-full bg-white">
+                <header className="h-16 border-b px-6 flex items-center justify-between bg-white/80 backdrop-blur z-10 sticky top-0">
+                    <div className="flex items-center gap-3">
+                        <div className="h-8 w-8 bg-blue-100 rounded-lg flex items-center justify-center text-blue-700">
+                            <Bot size={18} />
+                        </div>
+                        <div>
+                            <h2 className="font-semibold text-slate-900 leading-tight">Assistant</h2>
+                            <p className="text-xs text-slate-500">Gemini 2.5 • RAG Enabled</p>
+                        </div>
+                    </div>
+                    <Button variant="outline" size="sm" onClick={() => setMessages([])}>
+                        Clear Chat
+                    </Button>
+                </header>
+                
+                <div className="flex-1 overflow-y-auto p-4 md:p-6 scroll-smooth" ref={scrollRef}>
+                    <div className="max-w-3xl mx-auto space-y-6">
+                        {messages.map((msg, idx) => (
+                            <div key={idx} className={cn("flex gap-4", msg.role === 'user' ? "justify-end" : "justify-start")}>
+                                {msg.role !== 'user' && (
+                                    <div className="h-8 w-8 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center flex-shrink-0">
+                                        <Bot size={14} className="text-slate-600" />
+                                    </div>
+                                )}
+                                
+                                <div className={cn(
+                                    "max-w-[80%] space-y-2",
+                                    msg.role === 'user' ? "items-end" : "items-start"
+                                )}>
+                                    <div className={cn(
+                                        "px-4 py-3 rounded-2xl text-sm leading-relaxed shadow-sm",
+                                        msg.role === 'user' 
+                                            ? "bg-blue-600 text-white rounded-br-none" 
+                                            : "bg-white border border-slate-100 text-slate-800 rounded-tl-none"
+                                    )}>
+                                        {msg.content}
+                                    </div>
+                                    
+                                    {msg.retrievedContext && msg.retrievedContext.length > 0 && (
+                                        <div className="mt-2 pl-2">
+                                            <details className="text-xs group">
+                                                <summary className="list-none text-slate-400 hover:text-blue-600 cursor-pointer flex items-center gap-1 font-medium select-none">
+                                                    <Search size={10} />
+                                                    View Sources
+                                                </summary>
+                                                <div className="mt-2 p-3 bg-slate-50 rounded-lg border border-slate-100 text-slate-500 space-y-2 animate-in fade-in zoom-in-95 duration-200">
+                                                    {msg.retrievedContext.map((ctx, i) => (
+                                                        <div key={i} className="pl-2 border-l-2 border-slate-200 text-[11px] leading-snug line-clamp-2 italic">
+                                                            "{ctx}"
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </details>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {msg.role === 'user' && (
+                                    <div className="h-8 w-8 rounded-full bg-blue-600 flex items-center justify-center flex-shrink-0">
+                                        <User size={14} className="text-white" />
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                        {isProcessing && (
+                            <div className="flex gap-4 justify-start">
+                                <div className="h-8 w-8 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center">
+                                    <Bot size={14} className="text-slate-600" />
+                                </div>
+                                <div className="bg-white border border-slate-100 px-4 py-3 rounded-2xl rounded-tl-none shadow-sm flex items-center gap-2">
+                                    <Loader2 size={14} className="animate-spin text-slate-400" />
+                                    <span className="text-xs text-slate-400 font-medium">Thinking...</span>
+                                </div>
                             </div>
                         )}
                     </div>
                 </div>
-            )}
 
-            {/* VIEW: GRAPH */}
-            {currentView === AppView.ADMIN_GRAPH && (
-                <div className="h-full flex flex-col">
-                    <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex-1 flex flex-col">
-                         <div className="mb-4 flex justify-between items-center">
-                            <h3 className="font-medium">Neo4j Visualization</h3>
-                         </div>
-                         <div className="flex-1 bg-slate-50 rounded-lg overflow-hidden border border-slate-100 relative">
-                             <GraphVisualizer data={graphData} />
-                         </div>
-                    </div>
-                </div>
-            )}
-
-            {/* VIEW: CHAT */}
-            {currentView === AppView.USER_CHAT && (
-                <div className="max-w-4xl mx-auto h-full flex flex-col bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                    <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                        {messages.map((msg, idx) => (
-                            <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                <div className={`max-w-[80%] rounded-2xl p-4 ${msg.role === 'user' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800'}`}>
-                                    <div className="leading-relaxed whitespace-pre-wrap">{msg.content}</div>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                    
-                    <div className="p-4 bg-gray-50 border-t border-gray-200">
-                        <div className="flex gap-2">
-                            <input
-                                type="text"
+                <div className="p-4 bg-white/80 backdrop-blur border-t border-slate-100">
+                    <div className="max-w-3xl mx-auto relative">
+                        <form 
+                            onSubmit={(e) => { e.preventDefault(); handleSendMessage(); }}
+                            className="relative flex items-center gap-2"
+                        >
+                            <Input 
                                 value={inputMessage}
                                 onChange={(e) => setInputMessage(e.target.value)}
-                                onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                                placeholder="Ask about the knowledge graph..."
+                                placeholder="Message NeuroGraph..."
                                 disabled={isProcessing}
-                                className="flex-1 px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none shadow-sm disabled:opacity-50"
+                                className="pr-12 py-6 text-base rounded-full shadow-sm border-slate-200 focus-visible:ring-blue-500"
                             />
-                            <button
-                                onClick={handleSendMessage}
-                                disabled={isProcessing || !inputMessage.trim()}
-                                className="bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-xl shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            <Button 
+                                type="submit" 
+                                size="icon" 
+                                disabled={!inputMessage.trim() || isProcessing}
+                                className="absolute right-1.5 h-9 w-9 rounded-full bg-blue-600 hover:bg-blue-700"
                             >
-                                <Share2 className="rotate-90" size={20} />
-                            </button>
+                                <Send size={16} className="text-white" />
+                            </Button>
+                        </form>
+                        <div className="text-center mt-2">
+                             <p className="text-[10px] text-slate-400">
+                                AI can make mistakes. Review generated responses.
+                             </p>
                         </div>
                     </div>
                 </div>
-            )}
-        </main>
-      </div>
+            </div>
+        )}
+      </main>
     </div>
   );
 };

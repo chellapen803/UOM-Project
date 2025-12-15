@@ -14,7 +14,9 @@
     "react": "^19.2.3",
     "lucide-react": "^0.561.0",
     "d3": "^7.9.0",
-    "pdfjs-dist": "^5.4.449"
+    "pdfjs-dist": "3.11.174",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^2.3.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

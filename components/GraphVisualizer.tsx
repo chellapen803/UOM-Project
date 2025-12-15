@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import { ChevronDown, ChevronUp } from 'lucide-react';
-import { GraphData, Node, Link } from '../types';
+import { GraphData } from '../types';
+import { cn } from '../lib/utils';
 
 interface GraphVisualizerProps {
   data: GraphData;
@@ -9,16 +10,17 @@ interface GraphVisualizerProps {
 
 const GraphVisualizer: React.FC<GraphVisualizerProps> = ({ data }) => {
   const svgRef = useRef<SVGSVGElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [isLegendOpen, setIsLegendOpen] = useState(true);
 
   useEffect(() => {
-    if (!svgRef.current || data.nodes.length === 0) return;
+    if (!svgRef.current || !containerRef.current || data.nodes.length === 0) return;
 
     // Clear previous render
     d3.select(svgRef.current).selectAll("*").remove();
 
-    const width = svgRef.current.parentElement?.clientWidth || 800;
-    const height = 600;
+    const width = containerRef.current.clientWidth;
+    const height = containerRef.current.clientHeight || 600;
 
     // Create a deep copy of data because d3 mutates it
     const nodes = data.nodes.map(d => ({ ...d }));
@@ -29,12 +31,13 @@ const GraphVisualizer: React.FC<GraphVisualizerProps> = ({ data }) => {
     const simulation = d3.forceSimulation(nodes as any)
       .force("link", d3.forceLink(links).id((d: any) => d.id).distance(150))
       .force("charge", d3.forceManyBody().strength(-300))
-      .force("center", d3.forceCenter(width / 2, height / 2));
+      .force("center", d3.forceCenter(width / 2, height / 2))
+      .force("collide", d3.forceCollide(30));
 
     const svg = d3.select(svgRef.current)
       .attr("viewBox", [0, 0, width, height])
-      .style("max-width", "100%")
-      .style("height", "auto");
+      .style("width", "100%")
+      .style("height", "100%");
 
     // Arrow marker
     svg.append("defs").selectAll("marker")
@@ -48,12 +51,12 @@ const GraphVisualizer: React.FC<GraphVisualizerProps> = ({ data }) => {
       .attr("markerHeight", 6)
       .attr("orient", "auto")
       .append("path")
-      .attr("fill", "#9ca3af") // Gray-400
+      .attr("fill", "#94a3b8") // slate-400
       .attr("d", "M0,-5L10,0L0,5");
 
     const link = svg.append("g")
-      .attr("stroke", "#9ca3af")
-      .attr("stroke-opacity", 0.6)
+      .attr("stroke", "#cbd5e1") // slate-300
+      .attr("stroke-opacity", 0.8)
       .selectAll("line")
       .data(links)
       .join("line")
@@ -68,16 +71,18 @@ const GraphVisualizer: React.FC<GraphVisualizerProps> = ({ data }) => {
         .enter().append("text")
         .attr("font-family", "sans-serif")
         .attr("font-size", "10px")
-        .attr("fill", "#4b5563") // Gray-600
+        .attr("fill", "#64748b") // slate-500
         .attr("text-anchor", "middle")
+        .style("pointer-events", "none")
         .text((d: any) => d.type);
 
     const node = svg.append("g")
       .attr("stroke", "#fff")
-      .attr("stroke-width", 1.5)
+      .attr("stroke-width", 2)
       .selectAll("g")
       .data(nodes)
       .join("g")
+      .style("cursor", "grab")
       // Drag behavior
       .call(d3.drag<any, any>()
         .on("start", dragstarted)
@@ -85,7 +90,7 @@ const GraphVisualizer: React.FC<GraphVisualizerProps> = ({ data }) => {
         .on("end", dragended));
 
     node.append("circle")
-      .attr("r", 8)
+      .attr("r", 10)
       .attr("fill", (d: any) => color(d.label));
 
     node.append("title")
@@ -93,18 +98,19 @@ const GraphVisualizer: React.FC<GraphVisualizerProps> = ({ data }) => {
 
     // Node labels with halo for better visibility
     const labels = node.append("text")
-      .attr("x", 12)
+      .attr("x", 14)
       .attr("y", "0.31em")
       .text((d: any) => d.id)
-      .attr("fill", "#111827") // Dark gray/black for main text
+      .attr("fill", "#0f172a") // slate-900
       .attr("font-size", "12px")
-      .attr("font-weight", "500");
+      .attr("font-weight", "600")
+      .style("pointer-events", "none");
 
     // Add white halo to text
     labels.clone(true).lower()
       .attr("fill", "none")
       .attr("stroke", "white")
-      .attr("stroke-width", 3);
+      .attr("stroke-width", 4);
 
     simulation.on("tick", () => {
       link
@@ -147,24 +153,27 @@ const GraphVisualizer: React.FC<GraphVisualizerProps> = ({ data }) => {
   const colorScale = d3.scaleOrdinal(d3.schemeCategory10);
 
   return (
-    <div className="w-full h-[600px] border border-gray-200 rounded-lg overflow-hidden bg-white relative">
-        <div className="absolute top-2 right-2 z-10 bg-white/95 backdrop-blur-sm p-3 rounded-lg shadow-md border border-gray-200 max-w-[200px] transition-all">
+    <div ref={containerRef} className="w-full h-full relative bg-slate-50/30">
+        <div className={cn(
+            "absolute top-4 right-4 z-10 bg-white/95 backdrop-blur-sm rounded-lg shadow-sm border border-slate-200 transition-all duration-300",
+            isLegendOpen ? "p-3 max-w-[200px]" : "p-2 w-auto"
+        )}>
              <button 
                 onClick={() => setIsLegendOpen(!isLegendOpen)}
-                className="flex items-center justify-between w-full text-xs font-bold text-gray-700 hover:text-blue-600 transition-colors"
+                className="flex items-center justify-between w-full text-xs font-bold text-slate-700 hover:text-blue-600 transition-colors"
              >
-                <span className="uppercase tracking-wider">Graph Legend</span>
+                {isLegendOpen && <span className="uppercase tracking-wider mr-2">Legend</span>}
                 {isLegendOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
              </button>
              
              {isLegendOpen && (
                 <div className="mt-3 space-y-2 max-h-[200px] overflow-y-auto custom-scrollbar">
-                    {data.nodes.length === 0 && <span className="text-gray-400 text-xs italic">No data loaded</span>}
+                    {data.nodes.length === 0 && <span className="text-slate-400 text-xs italic">No nodes</span>}
                     <div className="flex flex-wrap gap-2">
                         {uniqueLabels.map((label, i) => (
                             <span 
                                 key={label} 
-                                className="px-2 py-1 rounded-md border text-[10px] font-medium flex items-center gap-1.5 bg-gray-50 text-gray-700"
+                                className="px-2 py-1 rounded-md border text-[10px] font-medium flex items-center gap-1.5 bg-slate-50 text-slate-700"
                                 style={{ borderColor: colorScale(label) as string }}
                             >
                                 <span 

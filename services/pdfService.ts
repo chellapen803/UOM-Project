@@ -1,17 +1,15 @@
 import * as pdfjsLib from 'pdfjs-dist';
 
-// Vite-specific import to bundle the worker locally.
-// The '?url' suffix tells Vite to treat this import as a static asset URL.
-// @ts-ignore - Ignores TS error if module definition for ?url is missing
-import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.js?url';
-
 // Handle CJS/ESM interop
 const pdfjs = (pdfjsLib as any).default || pdfjsLib;
 
-// Configure worker to use the local bundle processed by Vite.
-// This works in both dev (npm run dev) and production (npm run build).
+// "Best of both worlds" Solution:
+// Use a Blob proxy to load the worker from the CDN.
+// This resolves "Uncaught NetworkError" caused by Cross-Origin Worker restrictions.
 if (pdfjs && typeof window !== 'undefined') {
-  pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
+  const workerUrl = 'https://esm.sh/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+  const blob = new Blob([`importScripts('${workerUrl}');`], { type: 'application/javascript' });
+  pdfjs.GlobalWorkerOptions.workerSrc = URL.createObjectURL(blob);
 }
 
 export interface PdfPage {
@@ -31,11 +29,12 @@ export const extractContentFromPdf = async (file: File): Promise<ProcessedPdf> =
     const arrayBuffer = await file.arrayBuffer();
     
     // Load Document
-    // Note: cMaps are not configured here to avoid external CDNs. 
-    // If you need support for complex non-Latin fonts, copy 'pdfjs-dist/cmaps/' 
-    // to your 'public/cmaps/' directory and set `cMapUrl: '/cmaps/', cMapPacked: true`.
+    // We use the CDN for cMaps as well to ensure robust text extraction for 
+    // PDFs with non-standard fonts, matching the library version.
     const loadingTask = pdfjs.getDocument({
       data: arrayBuffer,
+      cMapUrl: 'https://esm.sh/pdfjs-dist@3.11.174/cmaps/',
+      cMapPacked: true,
     });
     
     const pdf = await loadingTask.promise;
@@ -100,7 +99,7 @@ export const extractContentFromPdf = async (file: File): Promise<ProcessedPdf> =
     let msg = "Failed to process PDF.";
     if (error.name === 'PasswordException') msg = "The PDF is password protected.";
     if (error.name === 'InvalidPDFException') msg = "The file is not a valid PDF.";
-    if (error.message && error.message.includes('worker')) msg = "PDF Worker failed to load.";
+    if (error.message && error.message.includes('worker')) msg = "PDF Worker failed to load. Please check your internet connection.";
     
     throw new Error(msg);
   }
