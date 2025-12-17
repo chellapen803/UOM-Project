@@ -1,0 +1,8 @@
+backend/node_modules
+backend/.env
+.env.local
+node_modules
+*.log
+neo4j-backups
+.DS_Store
+

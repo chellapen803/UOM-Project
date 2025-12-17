@@ -7,8 +7,13 @@ import {
 import { AppView, IngestedDocument, GraphData, Message } from './types';
 import GraphVisualizer from './components/GraphVisualizer';
 import { chunkText, extractGraphFromChunk, extractGraphFromMixedContent } from './services/textProcessingService';
-import { generateRAGResponse } from './services/geminiService';
 import { extractContentFromPdf, PdfPage } from './services/pdfService';
+import { 
+  saveGraphToNeo4j, 
+  loadGraphFromNeo4j, 
+  saveDocumentToNeo4j,
+  chatWithRAG 
+} from './services/neo4jService';
 import { 
   Button, Input, Textarea, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter,
   Badge, Label, Alert, AlertTitle, AlertDescription 
@@ -56,6 +61,24 @@ const App = () => {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages]);
+
+  // Load graph from Neo4j on mount
+  useEffect(() => {
+    const loadInitialGraph = async () => {
+      try {
+        // Silently load graph on mount - don't show processing status
+        const graphData = await loadGraphFromNeo4j();
+        setGraphData(graphData);
+      } catch (error) {
+        console.warn('Failed to load graph from Neo4j on mount (will start empty):', error);
+        // Fallback: start with empty graph if backend is not available
+        // Don't show error to user on page load - this is expected if backend is down
+        setGraphData({ nodes: [], links: [] });
+      }
+    };
+    
+    loadInitialGraph();
+  }, []);
 
   // --- ACTIONS ---
 
@@ -145,95 +168,122 @@ const App = () => {
         }
     }
 
-    setProcessingStatus('Finalizing Graph...');
+    setProcessingStatus('Saving to Neo4j database...');
 
-    const newDoc: IngestedDocument = {
-      id: newDocId,
-      name: docName,
-      uploadDate: new Date().toLocaleDateString(),
-      status: 'ready',
-      chunks
-    };
-    
-    setDocuments(prev => [...prev, newDoc]);
-
-    setGraphData(prev => {
-      const allNodes = [...prev.nodes, ...newNodes];
-      const allLinks = [...prev.links, ...newLinks];
+    try {
+      // Save graph data to Neo4j
+      await saveGraphToNeo4j(newNodes, newLinks);
       
-      const uniqueNodes = Array.from(new Map(allNodes.map(item => [item.id.toLowerCase(), item])).values());
-      const uniqueLinks = allLinks; 
-
-      return { nodes: uniqueNodes, links: uniqueLinks };
-    });
-
-    setIsProcessing(false);
-    setProcessingStatus('');
-    
-    if (uploadMode === 'text') {
+      // Save document and chunks to Neo4j
+      const entityIds = newNodes.map(n => n.id);
+      await saveDocumentToNeo4j(newDocId, docName, chunks, entityIds);
+      
+      // Update local documents state immediately (data is saved)
+      const newDoc: IngestedDocument = {
+        id: newDocId,
+        name: docName,
+        uploadDate: new Date().toLocaleDateString(),
+        status: 'ready',
+        chunks
+      };
+      
+      setDocuments(prev => [...prev, newDoc]);
+      
+      // Update graph state with new nodes/links (don't wait for reload if it fails)
+      setGraphData(prev => {
+        const allNodes = [...prev.nodes, ...newNodes];
+        const allLinks = [...prev.links, ...newLinks];
+        
+        // Deduplicate nodes (case-insensitive)
+        const uniqueNodes = Array.from(
+          new Map(allNodes.map(item => [item.id.toLowerCase(), item])).values()
+        );
+        
+        return { nodes: uniqueNodes, links: allLinks };
+      });
+      
+      // Clear processing immediately - data is saved and state is updated
+      setIsProcessing(false);
+      setProcessingStatus('');
+      
+      // Clear upload state
+      if (uploadMode === 'text') {
         setUploadText('');
-    } else {
+      } else {
         clearPdfSelection();
+      }
+      
+      // Try to reload graph from Neo4j in background (non-blocking, optional)
+      // This ensures we have the latest deduplicated data, but doesn't block the UI
+      loadGraphFromNeo4j()
+        .then(updatedGraph => {
+          setGraphData(updatedGraph);
+        })
+        .catch(error => {
+          console.warn('Failed to reload graph from Neo4j (data is saved):', error);
+          // Data is already saved and graph state is updated, so this is non-critical
+        });
+      
+    } catch (error: any) {
+      console.error('Error saving to Neo4j:', error);
+      setIsProcessing(false);
+      setProcessingStatus('');
+      alert(`Failed to save to database: ${error.message || 'Unknown error'}. Please ensure the backend server is running.`);
+      // Don't update state if save failed
+      return;
     }
   };
 
-  // 3. RETRIEVER
-  const retrieveContext = (query: string): string[] => {
-    const queryLower = query.toLowerCase();
-    const relevantChunks: string[] = [];
-    const hitNodes = graphData.nodes.filter(n => queryLower.includes(n.id.toLowerCase()) || queryLower.includes(n.label.toLowerCase()));
-    
-    if (hitNodes.length > 0) {
-        documents.forEach(doc => {
-            doc.chunks.forEach(chunk => {
-                if (hitNodes.some(n => chunk.text.toLowerCase().includes(n.id.toLowerCase()))) {
-                    relevantChunks.push(chunk.text);
-                }
-            });
-        });
-    } 
-    
-    if (relevantChunks.length === 0) {
-         documents.forEach(doc => {
-            doc.chunks.forEach(chunk => {
-                if (chunk.text.toLowerCase().includes(queryLower)) {
-                    relevantChunks.push(chunk.text);
-                }
-            });
-        });
-    }
-
-    if (relevantChunks.length === 0) {
-        const relevantNodes = graphData.nodes.slice(0, 50).map(n => n.id).join(", ");
-        if (relevantNodes) relevantChunks.push(`Known Entities in Graph: ${relevantNodes}`);
-    }
-
-    return [...new Set(relevantChunks)].slice(0, 3);
-  };
-
-  // 4. CHAT
+  // 3. CHAT
   const handleSendMessage = async () => {
     if (!inputMessage.trim()) return;
 
     const userMsg: Message = { role: 'user', content: inputMessage, timestamp: Date.now() };
     setMessages(prev => [...prev, userMsg]);
+    const query = inputMessage;
     setInputMessage('');
     setIsProcessing(true);
     setProcessingStatus('Thinking...');
 
-    const retrievedContext = retrieveContext(inputMessage);
-    const answer = await generateRAGResponse(inputMessage, retrievedContext);
+    try {
+      // Use backend RAG chat endpoint (retrieves context + generates response)
+      // This keeps the API key secure on the backend
+      const result = await chatWithRAG(query);
+      
+      const botMsg: Message = {
+        role: 'model',
+        content: result.response,
+        timestamp: Date.now(),
+        retrievedContext: result.context
+      };
 
-    const botMsg: Message = {
-      role: 'model',
-      content: answer,
-      timestamp: Date.now(),
-      retrievedContext
-    };
-
-    setMessages(prev => [...prev, botMsg]);
-    setIsProcessing(false);
-    setProcessingStatus('');
+      setMessages(prev => [...prev, botMsg]);
+    } catch (error: any) {
+      console.error('Chat error:', error);
+      
+      // Try to parse error response for better messaging
+      let errorMessage = error.message || 'Unknown error';
+      
+      // If it's a rate limit error, provide more helpful guidance
+      if (errorMessage.includes('Rate limit') || errorMessage.includes('quota')) {
+        errorMessage = `⚠️ **Rate Limit Reached**: ${errorMessage}\n\n` +
+          `**Solutions:**\n` +
+          `• Wait for the quota to reset (free tier: 20 requests/day)\n` +
+          `• Upgrade your Gemini API plan for higher limits\n` +
+          `• Check your usage: https://ai.dev/usage?tab=rate-limit`;
+      }
+      
+      const errorMsg: Message = {
+        role: 'model',
+        content: `Sorry, I encountered an error: ${errorMessage}`,
+        timestamp: Date.now(),
+        retrievedContext: []
+      };
+      setMessages(prev => [...prev, errorMsg]);
+    } finally {
+      setIsProcessing(false);
+      setProcessingStatus('');
+    }
   };
 
   const NavItem = ({ view, icon: Icon, label }: { view: AppView; icon: any; label: string }) => (
