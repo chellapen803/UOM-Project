@@ -6,7 +6,8 @@ import {
 } from 'lucide-react';
 import { AppView, IngestedDocument, GraphData, Message } from './types';
 import GraphVisualizer from './components/GraphVisualizer';
-import { chunkText, extractGraphFromChunk, extractGraphFromMixedContent, generateRAGResponse } from './services/geminiService';
+import { chunkText, extractGraphFromChunk, extractGraphFromMixedContent } from './services/textProcessingService';
+import { generateRAGResponse } from './services/geminiService';
 import { extractContentFromPdf, PdfPage } from './services/pdfService';
 import { 
   Button, Input, Textarea, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter,
@@ -122,17 +123,12 @@ const App = () => {
             sourceDoc: newDocId
         }));
 
-        setProcessingStatus(`Processing ${pdfPages.length} pages (Text & Vision mix)...`);
+        setProcessingStatus(`Processing ${pdfPages.length} pages using NLP extraction...`);
         
-        const BATCH_SIZE = 5;
-        for (let i = 0; i < pdfPages.length; i += BATCH_SIZE) {
-            const batch = pdfPages.slice(i, i + BATCH_SIZE);
-            setProcessingStatus(`Analyzing pages ${i+1}-${Math.min(i+BATCH_SIZE, pdfPages.length)} of ${pdfPages.length}...`);
-            
-            const extracted = await extractGraphFromMixedContent(batch);
-            newNodes = [...newNodes, ...extracted.nodes];
-            newLinks = [...newLinks, ...extracted.links];
-        }
+        // Extract graph from all pages at once (NLP is fast, no need for batching)
+        const extracted = extractGraphFromMixedContent(pdfPages);
+        newNodes = [...newNodes, ...extracted.nodes];
+        newLinks = [...newLinks, ...extracted.links];
 
     } 
     // --- STRATEGY B: RAW TEXT ---
@@ -143,7 +139,7 @@ const App = () => {
         for (let i = 0; i < chunks.length; i++) {
           setProcessingStatus(`Extracting entities from chunk ${i + 1} of ${chunks.length}...`);
           const chunk = chunks[i];
-          const extracted = await extractGraphFromChunk(chunk.text);
+          const extracted = extractGraphFromChunk(chunk.text);
           newNodes = [...newNodes, ...extracted.nodes];
           newLinks = [...newLinks, ...extracted.links];
         }

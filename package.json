@@ -6,16 +6,19 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "copy-worker": "mkdir -p public && cp node_modules/pdfjs-dist/build/pdf.worker.min.js public/pdf.worker.min.js",
+    "postinstall": "npm run copy-worker || true"
   },
   "dependencies": {
+    "@google/genai": "^1.33.0",
+    "clsx": "2.1.1",
+    "compromise": "^14.14.5",
+    "d3": "7.9.0",
+    "lucide-react": "0.378.0",
+    "pdfjs-dist": "3.11.174",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "@google/genai": "0.1.1",
-    "lucide-react": "0.378.0",
-    "d3": "7.9.0",
-    "pdfjs-dist": "3.11.174",
-    "clsx": "2.1.1",
     "tailwind-merge": "2.3.0"
   },
   "devDependencies": {
