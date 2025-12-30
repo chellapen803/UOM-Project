@@ -12,7 +12,9 @@ import {
   saveGraphToNeo4j, 
   loadGraphFromNeo4j, 
   saveDocumentToNeo4j,
-  chatWithRAG 
+  chatWithRAG,
+  checkRGCNHealth,
+  RGCNHealthResponse
 } from './services/neo4jService';
 import { 
   Button, Input, Textarea, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter,
@@ -75,6 +77,10 @@ const App = () => {
   
   const [isParsingPdf, setIsParsingPdf] = useState(false);
   
+  // R-GCN Status
+  const [rgcnStatus, setRgcnStatus] = useState<'active' | 'inactive' | 'checking'>('checking');
+  const [rgcnStats, setRgcnStats] = useState<RGCNHealthResponse | null>(null);
+  
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -99,6 +105,30 @@ const App = () => {
     };
     
     loadInitialGraph();
+  }, []);
+
+  // Check R-GCN status on mount and periodically
+  useEffect(() => {
+    const checkRGCNStatus = async () => {
+      try {
+        const health = await checkRGCNHealth();
+        if (health.available) {
+          setRgcnStatus('active');
+          setRgcnStats(health);
+        } else {
+          setRgcnStatus('inactive');
+          setRgcnStats(null);
+        }
+      } catch (error) {
+        setRgcnStatus('inactive');
+        setRgcnStats(null);
+      }
+    };
+    
+    checkRGCNStatus();
+    const interval = setInterval(checkRGCNStatus, 30000); // Check every 30 seconds
+    
+    return () => clearInterval(interval);
   }, []);
 
   // --- ACTIONS ---
@@ -264,7 +294,13 @@ const App = () => {
     const query = inputMessage;
     setInputMessage('');
     setIsProcessing(true);
-    setProcessingStatus('Thinking...');
+    
+    // Show R-GCN specific status if available
+    if (rgcnStatus === 'active') {
+      setProcessingStatus('Analyzing with R-GCN...');
+    } else {
+      setProcessingStatus('Thinking...');
+    }
 
     try {
       // Use backend RAG chat endpoint (retrieves context + generates response)
@@ -275,7 +311,8 @@ const App = () => {
         role: 'model',
         content: result.response,
         timestamp: Date.now(),
-        retrievedContext: result.context
+        retrievedContext: result.context,
+        metadata: result.metadata
       };
 
       setMessages(prev => [...prev, botMsg]);
@@ -355,9 +392,28 @@ const App = () => {
                 <span>Docs</span>
                 <span>{documents.length}</span>
             </div>
-            <div className="flex justify-between text-xs text-slate-500">
+            <div className="flex justify-between text-xs text-slate-500 mb-1">
                 <span>Nodes</span>
                 <span>{graphData.nodes.length}</span>
+            </div>
+            {/* R-GCN Status */}
+            <div className="mt-3 pt-3 border-t border-slate-800">
+                <div className="flex items-center gap-2 mb-1">
+                    <Network className="text-purple-500" size={12} />
+                    <span className="text-xs font-medium text-slate-300">R-GCN</span>
+                </div>
+                <div className="flex items-center gap-2 text-xs">
+                    <div className={`h-2 w-2 rounded-full ${rgcnStatus === 'active' ? 'bg-green-500 animate-pulse' : 'bg-slate-600'}`} />
+                    <span className="text-slate-500">
+                        {rgcnStatus === 'active' ? 'Active' : rgcnStatus === 'inactive' ? 'Offline' : 'Checking...'}
+                    </span>
+                </div>
+                {rgcnStatus === 'active' && rgcnStats?.stats && (
+                    <div className="text-[10px] text-slate-500 mt-1 pl-4">
+                        <div>Nodes: {rgcnStats.stats.nodes || 0}</div>
+                        <div>Edges: {rgcnStats.stats.edges || 0}</div>
+                    </div>
+                )}
             </div>
         </div>
 
@@ -483,7 +539,7 @@ const App = () => {
                                                     <Upload size={24} />
                                                 </div>
                                                 <h3 className="font-semibold text-slate-900">Click to upload PDF</h3>
-                                                <p className="text-sm text-slate-500 mt-1 mb-4">Max file size 10MB</p>
+                                                {/* <p className="text-sm text-slate-500 mt-1 mb-4">Max file size 10MB</p> */}
                                                 <Input 
                                                     type="file" 
                                                     accept=".pdf"
@@ -609,7 +665,22 @@ const App = () => {
                         </div>
                         <div>
                             <h2 className="font-semibold text-slate-900 leading-tight">Assistant</h2>
-                            <p className="text-xs text-slate-500">Gemini 2.5 • RAG Enabled</p>
+                            <div className="flex items-center gap-2">
+                                <p className="text-xs text-slate-500">Gemini 2.5 • RAG Enabled</p>
+                                {/* R-GCN Status Badge */}
+                                {rgcnStatus === 'active' && (
+                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-green-500 text-green-600">
+                                        <div className="h-1.5 w-1.5 rounded-full bg-green-500 mr-1 animate-pulse" />
+                                        R-GCN
+                                    </Badge>
+                                )}
+                                {rgcnStatus === 'inactive' && (
+                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-slate-300 text-slate-400">
+                                        <div className="h-1.5 w-1.5 rounded-full bg-slate-300 mr-1" />
+                                        R-GCN Offline
+                                    </Badge>
+                                )}
+                            </div>
                         </div>
                     </div>
                     <Button variant="outline" size="sm" onClick={() => setMessages([])}>
@@ -646,8 +717,26 @@ const App = () => {
                                                 <summary className="list-none text-slate-400 hover:text-blue-600 cursor-pointer flex items-center gap-1 font-medium select-none">
                                                     <Search size={10} />
                                                     View Sources
+                                                    {/* Show R-GCN indicator */}
+                                                    {msg.metadata?.rgcnUsed && (
+                                                        <Badge variant="outline" className="ml-2 text-[9px] px-1 border-purple-300 text-purple-600">
+                                                            R-GCN Enhanced
+                                                        </Badge>
+                                                    )}
                                                 </summary>
                                                 <div className="mt-2 p-3 bg-slate-50 rounded-lg border border-slate-100 text-slate-500 space-y-2 animate-in fade-in zoom-in-95 duration-200">
+                                                    {/* Show R-GCN similarity scores if available */}
+                                                    {msg.metadata?.rgcnSimilarities && msg.metadata.rgcnSimilarities.length > 0 && (
+                                                        <div className="mb-2 pb-2 border-b border-slate-200">
+                                                            <p className="text-[10px] font-semibold text-purple-600 mb-1">R-GCN Similarity Scores:</p>
+                                                            {msg.metadata.rgcnSimilarities.map((sim: any, i: number) => (
+                                                                <div key={i} className="text-[10px] flex justify-between">
+                                                                    <span className="truncate">{sim.entity}</span>
+                                                                    <span className="text-purple-500 ml-2">{(sim.score * 100).toFixed(1)}%</span>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
                                                     {msg.retrievedContext.map((ctx, i) => (
                                                         <div key={i} className="pl-2 border-l-2 border-slate-200 text-[11px] leading-snug line-clamp-2 italic">
                                                             "{ctx}"

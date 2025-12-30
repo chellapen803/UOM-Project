@@ -10,6 +10,7 @@ A Knowledge Graph-based Retrieval-Augmented Generation (RAG) application that ex
 - 💬 **Intelligent Chatbot**: Ask questions about your documents with RAG-powered responses
 - 🗄️ **Neo4j Integration**: Persistent storage in Neo4j graph database
 - 📊 **Graph Visualization**: Interactive D3.js force-directed graph visualization
+- 🧠 **R-GCN Enhanced Retrieval**: Optional semantic embeddings for improved context retrieval (Python microservice)
 
 ## Tech Stack
 
@@ -19,6 +20,7 @@ A Knowledge Graph-based Retrieval-Augmented Generation (RAG) application that ex
 - **NLP**: Compromise.js (client-side entity extraction)
 - **LLM**: Google Gemini API (for chatbot responses)
 - **Visualization**: D3.js (force-directed graph)
+- **ML/AI**: R-GCN (Relational Graph Convolutional Network) - Optional Python microservice for semantic embeddings
 
 ## Quick Start
 
@@ -27,6 +29,7 @@ A Knowledge Graph-based Retrieval-Augmented Generation (RAG) application that ex
 - Node.js (v18+)
 - Neo4j (Docker or Neo4j Desktop)
 - Gemini API key
+- Python 3.8+ (optional, for R-GCN service)
 
 ### Installation
 
@@ -65,6 +68,7 @@ A Knowledge Graph-based Retrieval-Augmented Generation (RAG) application that ex
    NEO4J_USER=neo4j
    NEO4J_PASSWORD=yourpassword
    PORT=3001
+   PYTHON_RGCN_URL=http://localhost:8000  # Optional: R-GCN service URL
    ```
    
    Create `.env.local` (in root):
@@ -84,10 +88,19 @@ A Knowledge Graph-based Retrieval-Augmented Generation (RAG) application that ex
    npm run dev
    ```
 
-7. **Open the app**
+7. **Optional: Start R-GCN service** (for enhanced semantic retrieval)
+   ```bash
+   cd backend/python-rgcn
+   pip install -r requirements.txt
+   python app.py
+   ```
+   See [RGCN_SETUP.md](./RGCN_SETUP.md) for detailed setup instructions.
+
+8. **Open the app**
    - Frontend: http://localhost:5173 (or the port Vite assigns)
    - Backend health: http://localhost:3001/health
    - Neo4j Browser: http://localhost:7474
+   - R-GCN service: http://localhost:8000/health (if running)
 
 ## Documentation
 
@@ -105,6 +118,7 @@ All documentation is available in the `documentation/` folder:
 - **[NEO4J_BROWSER_EXPORT.md](./NEO4J_BROWSER_EXPORT.md)** - Export data via Neo4j Browser
 - **[FIX_DOCKER_PERMISSIONS.md](./FIX_DOCKER_PERMISSIONS.md)** - Fix Docker permission issues
 - **[SPACY_INTEGRATION_GUIDE.md](./SPACY_INTEGRATION_GUIDE.md)** - Using spaCy instead of Compromise
+- **[RGCN_SETUP.md](./RGCN_SETUP.md)** - R-GCN semantic embedding service setup
 
 ## Project Structure
 
@@ -113,7 +127,8 @@ UOM-Project/
 ├── backend/              # Express.js backend server
 │   ├── config/          # Neo4j configuration
 │   ├── routes/          # API routes
-│   ├── services/        # Backend services (Neo4j, RAG, Gemini)
+│   ├── services/        # Backend services (Neo4j, RAG, Gemini, R-GCN)
+│   ├── python-rgcn/    # Python R-GCN microservice (optional)
 │   └── server.js        # Express app entry point
 ├── components/          # React components
 │   ├── GraphVisualizer.tsx
@@ -134,7 +149,8 @@ UOM-Project/
 4. **Graph Building**: Entities become nodes, relationships become links in the knowledge graph
 5. **Storage**: Graph data is saved to Neo4j for persistence
 6. **Visualization**: D3.js renders an interactive graph visualization
-7. **Chatbot**: Users can ask questions; RAG retrieves relevant context from Neo4j, Gemini generates responses
+7. **R-GCN Enhancement** (optional): Python service learns semantic embeddings for better retrieval
+8. **Chatbot**: Users can ask questions; RAG retrieves relevant context from Neo4j (with optional R-GCN enhancement), Gemini generates responses
 
 ## License
 

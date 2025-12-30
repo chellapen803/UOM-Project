@@ -29,11 +29,22 @@ export interface IngestedDocument {
   chunks: DocumentChunk[];
 }
 
+export interface RGCNMetadata {
+  rgcnUsed: boolean;
+  retrievalMethod: 'rgcn_enhanced' | 'standard' | 'standard_fallback';
+  rgcnSimilarities?: Array<{ entity: string; score: number }>;
+  rgcnEntities?: string[];
+  initialEntities?: string[];
+  similarEntitiesCount?: number;
+  rgcnError?: string;
+}
+
 export interface Message {
   role: 'user' | 'model' | 'system';
   content: string;
   timestamp: number;
   retrievedContext?: string[]; // To show what the RAG retrieved
+  metadata?: RGCNMetadata; // R-GCN metadata
 }
 
 export enum AppView {

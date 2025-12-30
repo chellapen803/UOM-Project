@@ -4,19 +4,19 @@ Your Firebase configuration has been added to the code. Here's what you need to 
 
 ## ✅ Frontend Configuration (Already Done)
 
-Your Firebase config is already in `config/firebase.ts` with your credentials as fallbacks. The app will work immediately, but for production, you should use environment variables.
+Your Firebase config should be in `config/firebase.ts`. For production, you should use environment variables instead of hardcoding credentials.
 
 ### Optional: Create `.env` file (recommended for production)
 
 Create a `.env` file in the root directory:
 
 ```env
-VITE_FIREBASE_API_KEY=AIzaSyAdzsQX5Q8yAsB51lno9OjunSieaOV-oGI
-VITE_FIREBASE_AUTH_DOMAIN=comptia-security-plus-chatbot.firebaseapp.com
-VITE_FIREBASE_PROJECT_ID=comptia-security-plus-chatbot
-VITE_FIREBASE_STORAGE_BUCKET=comptia-security-plus-chatbot.firebasestorage.app
-VITE_FIREBASE_MESSAGING_SENDER_ID=311344258712
-VITE_FIREBASE_APP_ID=1:311344258712:web:cb3c47956c1a172eb27aed
+VITE_FIREBASE_API_KEY=YOUR_API_KEY_HERE
+VITE_FIREBASE_AUTH_DOMAIN=your-project-id.firebaseapp.com
+VITE_FIREBASE_PROJECT_ID=your-project-id
+VITE_FIREBASE_STORAGE_BUCKET=your-project-id.firebasestorage.app
+VITE_FIREBASE_MESSAGING_SENDER_ID=YOUR_MESSAGING_SENDER_ID
+VITE_FIREBASE_APP_ID=YOUR_APP_ID
 ```
 
 ## 🔧 Backend Configuration (Required)
@@ -25,7 +25,7 @@ You need to set up Firebase Admin SDK for the backend to verify authentication t
 
 ### Step 1: Get Service Account Key
 
-1. Go to [Firebase Console](https://console.firebase.google.com/project/comptia-security-plus-chatbot/settings/serviceaccounts/adminsdk)
+1. Go to [Firebase Console](https://console.firebase.google.com/project/your-project-id/settings/serviceaccounts/adminsdk)
 2. Click **"Generate new private key"**
 3. Download the JSON file (keep it secure!)
 
@@ -37,7 +37,7 @@ You need to set up Firebase Admin SDK for the backend to verify authentication t
 2. Copy the entire JSON content
 3. Create `backend/.env` file:
 ```env
-FIREBASE_SERVICE_ACCOUNT='{"type":"service_account","project_id":"comptia-security-plus-chatbot","private_key_id":"...","private_key":"...","client_email":"...","client_id":"...","auth_uri":"...","token_uri":"...","auth_provider_x509_cert_url":"...","client_x509_cert_url":"..."}'
+FIREBASE_SERVICE_ACCOUNT='{"type":"service_account","project_id":"your-project-id","private_key_id":"...","private_key":"...","client_email":"...","client_id":"...","auth_uri":"...","token_uri":"...","auth_provider_x509_cert_url":"...","client_x509_cert_url":"..."}'
 ```
    (Replace with your actual JSON, all on one line)
 
@@ -59,7 +59,7 @@ npm install firebase-admin
 
 ## 🔐 Enable Authentication
 
-1. Go to [Firebase Console → Authentication](https://console.firebase.google.com/project/comptia-security-plus-chatbot/authentication)
+1. Go to [Firebase Console → Authentication](https://console.firebase.google.com/project/your-project-id/authentication)
 2. Click **"Get started"** if not already enabled
 3. Go to **"Sign-in method"** tab
 4. Enable **"Email/Password"** provider

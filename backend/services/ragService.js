@@ -4,7 +4,7 @@ import driver from '../config/neo4j.js';
  * Extract meaningful keywords from a query
  * Removes common stop words and question words
  */
-function extractKeywords(query) {
+export function extractKeywords(query) {
   const stopWords = new Set([
     'what', 'is', 'are', 'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
     'of', 'with', 'by', 'from', 'as', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does',

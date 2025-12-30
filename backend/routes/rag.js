@@ -2,6 +2,8 @@ import express from 'express';
 import { retrieveContext, findRelatedEntities } from '../services/ragService.js';
 import { generateRAGResponse } from '../services/geminiService.js';
 import { verifyToken, requireAuth } from '../middleware/auth.js';
+import { checkRGCNHealth, retrieveContextWithRGCN } from '../services/rgcnService.js';
+import { extractKeywords } from '../services/ragService.js';
 
 const router = express.Router();
 
@@ -31,8 +33,33 @@ router.post('/chat', verifyToken, requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Query is required' });
     }
     
-    // Step 1: Retrieve context from knowledge graph
-    const context = await retrieveContext(query);
+    // Check R-GCN service availability
+    const rgcnHealth = await checkRGCNHealth();
+    let context = [];
+    let metadata = { rgcnUsed: false, retrievalMethod: 'standard' };
+    
+    // Step 1: Retrieve context (try R-GCN enhanced, fallback to standard)
+    if (rgcnHealth.available) {
+      try {
+        console.log('[RAG] Using R-GCN enhanced retrieval');
+        const rgcnResult = await retrieveContextWithRGCN(query, extractKeywords);
+        context = rgcnResult.context;
+        metadata = rgcnResult.metadata || metadata;
+      } catch (rgcnError) {
+        console.warn('[RAG] R-GCN retrieval failed, falling back to standard:', rgcnError.message);
+        // Fallback to standard retrieval
+        context = await retrieveContext(query);
+        metadata = {
+          rgcnUsed: false,
+          rgcnError: rgcnError.message,
+          retrievalMethod: 'standard_fallback'
+        };
+      }
+    } else {
+      console.log('[RAG] R-GCN service unavailable, using standard retrieval');
+      context = await retrieveContext(query);
+      metadata = { rgcnUsed: false, retrievalMethod: 'standard' };
+    }
     
     // Step 2: Generate response using Gemini
     try {
@@ -40,7 +67,8 @@ router.post('/chat', verifyToken, requireAuth, async (req, res) => {
       
       res.json({ 
         response,
-        context // Include context for debugging/source display
+        context, // Include context for debugging/source display
+        metadata // Include R-GCN metadata
       });
     } catch (geminiError) {
       // If Gemini fails (e.g., rate limit), return context-only response
@@ -56,6 +84,7 @@ router.post('/chat', verifyToken, requireAuth, async (req, res) => {
         res.json({
           response: `⚠️ **Rate Limit Notice**: ${geminiError.message}\n\n${contextSummary}\n\n*Note: Full AI-generated response unavailable due to API rate limits. Please try again later or upgrade your Gemini API plan.*`,
           context,
+          metadata,
           warning: 'rate_limit_exceeded'
         });
       } else {
@@ -87,6 +116,19 @@ router.get('/related/:entityId', async (req, res) => {
   } catch (error) {
     console.error('Error finding related entities:', error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// R-GCN health check endpoint
+router.get('/rgcn-health', verifyToken, requireAuth, async (req, res) => {
+  try {
+    const health = await checkRGCNHealth();
+    res.json(health);
+  } catch (error) {
+    res.json({ 
+      available: false, 
+      error: error.message || 'Service unavailable' 
+    });
   }
 });
 

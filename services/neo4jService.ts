@@ -140,11 +140,51 @@ export async function queryGraphForRAG(query: string): Promise<string[]> {
   return data.context || [];
 }
 
+export interface RGCNHealthResponse {
+  available: boolean;
+  status?: string;
+  stats?: {
+    nodes?: number;
+    edges?: number;
+    relation_types?: number;
+  };
+  model?: {
+    embedding_dim?: number;
+    num_relations?: number;
+    num_nodes?: number;
+  };
+  error?: string;
+}
+
+/**
+ * Check R-GCN service health
+ */
+export async function checkRGCNHealth(): Promise<RGCNHealthResponse> {
+  const headers = await getAuthHeaders();
+  try {
+    const response = await fetch(`${API_BASE_URL}/rag/rgcn-health`, {
+      headers,
+      signal: AbortSignal.timeout(3000)
+    });
+    
+    if (!response.ok) {
+      return { available: false, error: response.statusText };
+    }
+    
+    return await response.json();
+  } catch (error: any) {
+    return { 
+      available: false, 
+      error: error.message || 'Service unavailable' 
+    };
+  }
+}
+
 /**
  * RAG chat endpoint - retrieves context and generates response using Gemini
  * This is the preferred method as it keeps API keys secure on the backend
  */
-export async function chatWithRAG(query: string): Promise<{ response: string; context: string[] }> {
+export async function chatWithRAG(query: string): Promise<{ response: string; context: string[]; metadata?: any }> {
   const headers = await getAuthHeaders();
   const response = await fetch(`${API_BASE_URL}/rag/chat`, {
     method: 'POST',
@@ -168,7 +208,8 @@ export async function chatWithRAG(query: string): Promise<{ response: string; co
 
   return {
     response: data.response || "No response generated.",
-    context: data.context || []
+    context: data.context || [],
+    metadata: data.metadata
   };
 }
 
