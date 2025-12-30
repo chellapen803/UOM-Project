@@ -133,7 +133,7 @@ const App = () => {
     };
     
     checkRGCNStatus();
-    const interval = setInterval(checkRGCNStatus, 30000); // Check every 30 seconds
+    const interval = setInterval(checkRGCNStatus, 5000); // Check every 5 seconds
     
     return () => clearInterval(interval);
   }, []);
@@ -358,10 +358,23 @@ const App = () => {
     setInputMessage('');
     setIsProcessing(true);
     
-    // Show R-GCN specific status if available
-    if (rgcnStatus === 'active') {
-      setProcessingStatus('Analyzing with R-GCN...');
-    } else {
+    // Check R-GCN status dynamically before sending query
+    setProcessingStatus('Checking R-GCN status...');
+    try {
+      const health = await checkRGCNHealth();
+      if (health.available) {
+        setRgcnStatus('active');
+        setRgcnStats(health);
+        setProcessingStatus('Analyzing with R-GCN...');
+      } else {
+        setRgcnStatus('inactive');
+        setRgcnStats(null);
+        setProcessingStatus('Thinking...');
+      }
+    } catch (error) {
+      // If check fails, mark as inactive and continue with standard retrieval
+      setRgcnStatus('inactive');
+      setRgcnStats(null);
       setProcessingStatus('Thinking...');
     }
 
