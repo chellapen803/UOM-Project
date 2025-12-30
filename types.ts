@@ -41,3 +41,12 @@ export enum AppView {
   ADMIN_GRAPH = 'ADMIN_GRAPH',
   USER_CHAT = 'USER_CHAT',
 }
+
+export type UserRole = 'user' | 'superuser';
+
+export interface AppUser {
+  uid: string;
+  email: string | null;
+  role: UserRole;
+  displayName?: string;
+}

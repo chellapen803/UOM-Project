@@ -1,6 +1,26 @@
 import { GraphData, Node, Link } from '../types';
+import { auth } from '../config/firebase';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+
+/**
+ * Get authorization header with Firebase ID token
+ */
+async function getAuthHeaders(): Promise<HeadersInit> {
+  const headers: HeadersInit = { 'Content-Type': 'application/json' };
+  
+  try {
+    const user = auth.currentUser;
+    if (user) {
+      const token = await user.getIdToken();
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+  } catch (error) {
+    console.warn('Failed to get auth token:', error);
+  }
+  
+  return headers;
+}
 
 export interface GraphDataResponse {
   nodes: Node[];
@@ -24,9 +44,10 @@ export async function saveGraphToNeo4j(
   nodes: Node[],
   links: Link[]
 ): Promise<SaveGraphResponse> {
+  const headers = await getAuthHeaders();
   const response = await fetch(`${API_BASE_URL}/graph/save`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({ nodes, links })
   });
 
@@ -47,7 +68,9 @@ export async function loadGraphFromNeo4j(): Promise<GraphDataResponse> {
   const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
 
   try {
+    const headers = await getAuthHeaders();
     const response = await fetch(`${API_BASE_URL}/graph/load`, {
+      headers,
       signal: controller.signal
     });
 
@@ -77,9 +100,10 @@ export async function saveDocumentToNeo4j(
   chunks: Array<{ id: string; text: string; sourceDoc: string }>,
   entityIds?: string[]
 ): Promise<SaveDocumentResponse> {
+  const headers = await getAuthHeaders();
   const response = await fetch(`${API_BASE_URL}/documents/save`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({
       docId,
       docName,
@@ -100,9 +124,10 @@ export async function saveDocumentToNeo4j(
  * Enhanced RAG query using Neo4j
  */
 export async function queryGraphForRAG(query: string): Promise<string[]> {
+  const headers = await getAuthHeaders();
   const response = await fetch(`${API_BASE_URL}/rag/query`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({ query })
   });
 
@@ -120,9 +145,10 @@ export async function queryGraphForRAG(query: string): Promise<string[]> {
  * This is the preferred method as it keeps API keys secure on the backend
  */
 export async function chatWithRAG(query: string): Promise<{ response: string; context: string[] }> {
+  const headers = await getAuthHeaders();
   const response = await fetch(`${API_BASE_URL}/rag/chat`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({ query })
   });
 

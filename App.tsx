@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { 
   Layout, Upload, Network, MessageSquare, Database, FileText, Share2, 
   Search, Bot, FileUp, X, Loader2, Image as ImageIcon, FileType2, 
-  Send, User, Settings, CheckCircle2, AlertCircle 
+  Send, User, Settings, CheckCircle2, AlertCircle, LogOut, Shield 
 } from 'lucide-react';
 import { AppView, IngestedDocument, GraphData, Message } from './types';
 import GraphVisualizer from './components/GraphVisualizer';
@@ -19,6 +19,8 @@ import {
   Badge, Label, Alert, AlertTitle, AlertDescription 
 } from './components/ui';
 import { cn } from './lib/utils';
+import { useAuth } from './contexts/AuthContext';
+import { Auth } from './components/Auth';
 
 const SAMPLE_TEXT = `
 Apple Inc. is an American multinational technology company headquartered in Cupertino, California, that designs, develops, and sells consumer electronics, computer software, and online services. 
@@ -30,6 +32,25 @@ Firebase provides backend services such as Firestore and Authentication.
 `;
 
 const App = () => {
+  // --- AUTH ---
+  const { currentUser, appUser, logout, isSuperuser, loading: authLoading } = useAuth();
+
+  // Show auth screen if not logged in
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <div className="text-center">
+          <Loader2 className="h-8 w-8 animate-spin mx-auto text-blue-600" />
+          <p className="mt-4 text-slate-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!currentUser) {
+    return <Auth />;
+  }
+
   // --- STATE ---
   const [currentView, setCurrentView] = useState<AppView>(AppView.USER_CHAT);
   
@@ -316,9 +337,13 @@ const App = () => {
           <div className="px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Workspace</div>
           <NavItem view={AppView.USER_CHAT} icon={MessageSquare} label="Chat" />
           
-          <div className="mt-8 px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Admin</div>
-          <NavItem view={AppView.ADMIN_UPLOAD} icon={Upload} label="Ingest Data" />
-          <NavItem view={AppView.ADMIN_GRAPH} icon={Network} label="Graph View" />
+          {isSuperuser() && (
+            <>
+              <div className="mt-8 px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Admin</div>
+              <NavItem view={AppView.ADMIN_UPLOAD} icon={Upload} label="Ingest Data" />
+              <NavItem view={AppView.ADMIN_GRAPH} icon={Network} label="Graph View" />
+            </>
+          )}
         </nav>
 
         <div className="p-4 bg-slate-900 m-3 rounded-lg border border-slate-800">
@@ -335,6 +360,34 @@ const App = () => {
                 <span>{graphData.nodes.length}</span>
             </div>
         </div>
+
+        <div className="p-4 border-t border-slate-800">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="h-8 w-8 rounded-full bg-blue-600 flex items-center justify-center flex-shrink-0">
+              <User size={14} className="text-white" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-slate-200 truncate">{appUser?.email || 'User'}</p>
+              <div className="flex items-center gap-1 mt-0.5">
+                {isSuperuser() && (
+                  <Shield size={10} className="text-yellow-500" />
+                )}
+                <p className="text-xs text-slate-500">
+                  {isSuperuser() ? 'Superuser' : 'User'}
+                </p>
+              </div>
+            </div>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={logout}
+            className="w-full justify-start gap-2 text-slate-400 hover:text-slate-100 hover:bg-slate-800"
+          >
+            <LogOut size={14} />
+            Sign Out
+          </Button>
+        </div>
       </aside>
 
       {/* MAIN CONTENT */}
@@ -342,6 +395,32 @@ const App = () => {
         
         {/* VIEW: UPLOAD */}
         {currentView === AppView.ADMIN_UPLOAD && (
+          !isSuperuser() ? (
+            <div className="flex-1 flex items-center justify-center p-8">
+              <Card className="max-w-md">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <AlertCircle className="h-5 w-5 text-yellow-500" />
+                    Access Restricted
+                  </CardTitle>
+                  <CardDescription>
+                    Only superusers can upload documents.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-slate-600">
+                    You need superuser privileges to access the document upload feature. 
+                    Please contact an administrator if you need access.
+                  </p>
+                </CardContent>
+                <CardFooter>
+                  <Button onClick={() => setCurrentView(AppView.USER_CHAT)} variant="outline" className="w-full">
+                    Go to Chat
+                  </Button>
+                </CardFooter>
+              </Card>
+            </div>
+          ) : (
           <div className="flex-1 overflow-y-auto p-8">
             <div className="max-w-4xl mx-auto space-y-6">
                 <div>
@@ -467,10 +546,37 @@ const App = () => {
                 </div>
             </div>
           </div>
+          )
         )}
 
         {/* VIEW: GRAPH */}
         {currentView === AppView.ADMIN_GRAPH && (
+          !isSuperuser() ? (
+            <div className="flex-1 flex items-center justify-center p-8">
+              <Card className="max-w-md">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <AlertCircle className="h-5 w-5 text-yellow-500" />
+                    Access Restricted
+                  </CardTitle>
+                  <CardDescription>
+                    Only superusers can view the graph.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-slate-600">
+                    You need superuser privileges to access the graph visualization. 
+                    Please contact an administrator if you need access.
+                  </p>
+                </CardContent>
+                <CardFooter>
+                  <Button onClick={() => setCurrentView(AppView.USER_CHAT)} variant="outline" className="w-full">
+                    Go to Chat
+                  </Button>
+                </CardFooter>
+              </Card>
+            </div>
+          ) : (
             <div className="flex-1 flex flex-col h-full bg-slate-50">
                  <header className="h-16 border-b bg-white px-6 flex items-center justify-between">
                     <h2 className="font-semibold flex items-center gap-2">
@@ -490,6 +596,7 @@ const App = () => {
                     </Card>
                  </div>
             </div>
+          )
         )}
 
         {/* VIEW: CHAT */}

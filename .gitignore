@@ -26,6 +26,11 @@ backend/.env.local
 backend/.env.production
 *.local
 
+# Firebase service account keys (contains secrets)
+serviceAccountKey.json
+*-service-account.json
+firebase-service-account*.json
+
 # Neo4j backups
 neo4j-backups
 *.neo4j-backup

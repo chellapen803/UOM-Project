@@ -1,10 +1,11 @@
 import express from 'express';
 import { saveGraphData, getGraphData } from '../services/neo4jService.js';
+import { verifyToken, requireSuperuser, requireAuth } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// Save graph data (nodes + links)
-router.post('/save', async (req, res) => {
+// Save graph data (nodes + links) - requires superuser
+router.post('/save', verifyToken, requireSuperuser, async (req, res) => {
   try {
     const { nodes, links } = req.body;
     
@@ -20,8 +21,8 @@ router.post('/save', async (req, res) => {
   }
 });
 
-// Load all graph data
-router.get('/load', async (req, res) => {
+// Load all graph data - requires authentication
+router.get('/load', verifyToken, requireAuth, async (req, res) => {
   try {
     const graphData = await getGraphData();
     res.json(graphData);

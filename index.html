@@ -4,8 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>NeuroGraph Chatbot</title>
-    <!-- Content Security Policy configuration for PDF.js Worker and Gemini API -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self' https://esm.sh; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://esm.sh; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; worker-src 'self' blob: https://esm.sh; connect-src 'self' http://localhost:3001 https://esm.sh https://generativelanguage.googleapis.com; img-src 'self' blob: data:; font-src 'self' data:;">
+    <!-- Content Security Policy configuration for PDF.js Worker, Gemini API, and Firebase -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' https://esm.sh; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://esm.sh; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; worker-src 'self' blob: https://esm.sh; connect-src 'self' http://localhost:3001 https://esm.sh https://generativelanguage.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://*.firebaseapp.com https://*.googleapis.com; img-src 'self' blob: data:; font-src 'self' data:;">
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
       body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; }

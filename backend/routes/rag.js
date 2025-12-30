@@ -1,11 +1,12 @@
 import express from 'express';
 import { retrieveContext, findRelatedEntities } from '../services/ragService.js';
 import { generateRAGResponse } from '../services/geminiService.js';
+import { verifyToken, requireAuth } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// RAG query endpoint (returns only context)
-router.post('/query', async (req, res) => {
+// RAG query endpoint (returns only context) - requires authentication
+router.post('/query', verifyToken, requireAuth, async (req, res) => {
   try {
     const { query } = req.body;
     
@@ -21,8 +22,8 @@ router.post('/query', async (req, res) => {
   }
 });
 
-// RAG chat endpoint (retrieves context + generates response with Gemini)
-router.post('/chat', async (req, res) => {
+// RAG chat endpoint (retrieves context + generates response with Gemini) - requires authentication
+router.post('/chat', verifyToken, requireAuth, async (req, res) => {
   try {
     const { query } = req.body;
     

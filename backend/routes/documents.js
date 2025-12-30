@@ -1,10 +1,11 @@
 import express from 'express';
 import { saveDocument, linkChunksToEntities, getDocuments } from '../services/neo4jService.js';
+import { verifyToken, requireSuperuser, requireAuth } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// Save document and chunks
-router.post('/save', async (req, res) => {
+// Save document and chunks - requires superuser
+router.post('/save', verifyToken, requireSuperuser, async (req, res) => {
   try {
     const { docId, docName, chunks, entities } = req.body;
     
@@ -26,8 +27,8 @@ router.post('/save', async (req, res) => {
   }
 });
 
-// Get all documents
-router.get('/list', async (req, res) => {
+// Get all documents - requires authentication
+router.get('/list', verifyToken, requireAuth, async (req, res) => {
   try {
     const documents = await getDocuments();
     res.json({ documents });
