@@ -17,6 +17,11 @@ import {
   RGCNHealthResponse
 } from './services/neo4jService';
 import { 
+  loadChatMessages, 
+  saveChatMessages, 
+  clearChatMessages 
+} from './services/chatService';
+import { 
   Button, Input, Textarea, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter,
   Badge, Label, Alert, AlertTitle, AlertDescription 
 } from './components/ui';
@@ -82,6 +87,8 @@ const App = () => {
   const [rgcnStats, setRgcnStats] = useState<RGCNHealthResponse | null>(null);
   
   const scrollRef = useRef<HTMLDivElement>(null);
+  const isLoadingMessagesRef = useRef(false);
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -130,6 +137,62 @@ const App = () => {
     
     return () => clearInterval(interval);
   }, []);
+
+  // Load chat messages from Firestore when user is authenticated
+  useEffect(() => {
+    if (!currentUser || !appUser) return;
+
+    const loadMessages = async () => {
+      isLoadingMessagesRef.current = true;
+      try {
+        const savedMessages = await loadChatMessages(appUser.uid);
+        if (savedMessages.length > 0) {
+          setMessages(savedMessages);
+        } else {
+          // If no saved messages, keep the default welcome message
+          setMessages([
+            { role: 'system', content: 'Welcome to the Knowledge Graph Chatbot. I can answer questions based on the documents you upload.', timestamp: Date.now() }
+          ]);
+        }
+      } catch (error) {
+        console.error('Error loading chat messages:', error);
+        // Keep default message on error
+      } finally {
+        isLoadingMessagesRef.current = false;
+      }
+    };
+
+    loadMessages();
+  }, [currentUser, appUser]);
+
+  // Save chat messages to Firestore when they change (with debouncing)
+  useEffect(() => {
+    if (!currentUser || !appUser) return;
+    if (isLoadingMessagesRef.current) return; // Don't save while loading
+
+    // Don't save if only system message exists
+    const nonSystemMessages = messages.filter(msg => msg.role !== 'system');
+    if (nonSystemMessages.length === 0) return;
+
+    // Debounce saves to avoid too many writes
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+
+    saveTimeoutRef.current = setTimeout(async () => {
+      try {
+        await saveChatMessages(appUser.uid, messages);
+      } catch (error) {
+        console.error('Error saving chat messages:', error);
+      }
+    }, 1000); // Wait 1 second after last change before saving
+
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+    };
+  }, [messages, currentUser, appUser]);
 
   // --- ACTIONS ---
 
@@ -683,7 +746,23 @@ const App = () => {
                             </div>
                         </div>
                     </div>
-                    <Button variant="outline" size="sm" onClick={() => setMessages([])}>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={async () => {
+                        setMessages([
+                          { role: 'system', content: 'Welcome to the Knowledge Graph Chatbot. I can answer questions based on the documents you upload.', timestamp: Date.now() }
+                        ]);
+                        // Clear from Firestore
+                        if (appUser) {
+                          try {
+                            await clearChatMessages(appUser.uid);
+                          } catch (error) {
+                            console.error('Error clearing chat messages:', error);
+                          }
+                        }
+                      }}
+                    >
                         Clear Chat
                     </Button>
                 </header>

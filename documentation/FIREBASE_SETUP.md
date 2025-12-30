@@ -74,7 +74,12 @@ service cloud.firestore {
       allow write: if request.auth != null && request.auth.uid == userId;
     }
     
-    // Only authenticated users can read/write
+    // Users can only read/write their own chat messages
+    match /chats/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Only authenticated users can read/write (fallback for other collections)
     match /{document=**} {
       allow read, write: if request.auth != null;
     }
