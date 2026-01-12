@@ -2,47 +2,72 @@ import driver from '../config/neo4j.js';
 
 /**
  * Save nodes and relationships to Neo4j
- * Uses MERGE to avoid duplicates based on id
+ * Uses batch operations with UNWIND for performance
  */
 export async function saveGraphData(nodes, links) {
   const session = driver.session();
   
   try {
     await session.executeWrite(async (tx) => {
-      // Step 1: Create/Merge nodes
-      for (const node of nodes) {
-        const label = node.label || 'Entity';
-        await tx.run(
-          `MERGE (n:${label} {id: $id})
-           ON CREATE SET 
-             n.id = $id,
-             n.label = $label,
-             n.group = $group,
-             n.createdAt = datetime()
-           ON MATCH SET
-             n.label = $label,
-             n.group = $group`,
-          {
+      // Step 1: Batch create/merge nodes by label
+      if (nodes.length > 0) {
+        // Group nodes by label for efficient batching
+        const nodesByLabel = {};
+        nodes.forEach(node => {
+          const label = node.label || 'Entity';
+          if (!nodesByLabel[label]) {
+            nodesByLabel[label] = [];
+          }
+          nodesByLabel[label].push({
             id: node.id.toLowerCase(),
             label: label,
             group: node.group || 1
-          }
-        );
+          });
+        });
+        
+        // Batch create nodes for each label
+        for (const [label, labelNodes] of Object.entries(nodesByLabel)) {
+          await tx.run(
+            `UNWIND $nodes AS node
+             MERGE (n:${label} {id: node.id})
+             ON CREATE SET 
+               n.id = node.id,
+               n.label = node.label,
+               n.group = node.group,
+               n.createdAt = datetime()
+             ON MATCH SET
+               n.label = node.label,
+               n.group = node.group`,
+            { nodes: labelNodes }
+          );
+        }
       }
       
-      // Step 2: Create relationships
-      for (const link of links) {
-        const relType = link.type || 'RELATED_TO';
-        await tx.run(
-          `MATCH (a), (b)
-           WHERE a.id = $sourceId AND b.id = $targetId
-           MERGE (a)-[r:${relType}]->(b)
-           ON CREATE SET r.createdAt = datetime()`,
-          {
+      // Step 2: Batch create relationships
+      if (links.length > 0) {
+        // Group links by relationship type
+        const linksByType = {};
+        links.forEach(link => {
+          const relType = link.type || 'RELATED_TO';
+          if (!linksByType[relType]) {
+            linksByType[relType] = [];
+          }
+          linksByType[relType].push({
             sourceId: link.source.toLowerCase(),
             targetId: link.target.toLowerCase()
-          }
-        );
+          });
+        });
+        
+        // Batch create relationships for each type
+        for (const [relType, typeLinks] of Object.entries(linksByType)) {
+          await tx.run(
+            `UNWIND $links AS link
+             MATCH (a {id: link.sourceId}), (b {id: link.targetId})
+             MERGE (a)-[r:${relType}]->(b)
+             ON CREATE SET r.createdAt = datetime()`,
+            { links: typeLinks }
+          );
+        }
       }
     });
     
@@ -102,9 +127,15 @@ export async function getGraphData() {
 
 /**
  * Save document and chunks
+ * Uses batch operations with UNWIND for performance (critical for large PDFs)
  */
 export async function saveDocument(docId, docName, chunks) {
   const session = driver.session();
+  const isDev = process.env.NODE_ENV !== 'production';
+  
+  if (isDev) {
+    console.log(`[Neo4j] Saving document: ${docName} (${chunks.length} chunks)`);
+  }
   
   try {
     await session.executeWrite(async (tx) => {
@@ -122,28 +153,45 @@ export async function saveDocument(docId, docName, chunks) {
         }
       );
       
-      // Create chunk nodes and link to document
-      for (const chunk of chunks) {
-        await tx.run(
-          `MERGE (chunk:Chunk {id: $chunkId})
-           SET chunk.text = $text,
-               chunk.sourceDoc = $sourceDoc
-           WITH chunk
-           MATCH (doc:Document {id: $docId})
-           MERGE (doc)-[:CONTAINS]->(chunk)`,
+      // Batch create all chunks and link to document in a single query
+      if (chunks.length > 0) {
+        const chunkData = chunks.map(chunk => ({
+          chunkId: chunk.id,
+          text: chunk.text,
+          sourceDoc: chunk.sourceDoc
+        }));
+        
+        const chunkResult = await tx.run(
+          `MATCH (doc:Document {id: $docId})
+           UNWIND $chunks AS chunk
+           MERGE (chunkNode:Chunk {id: chunk.chunkId})
+           SET chunkNode.text = chunk.text,
+               chunkNode.sourceDoc = chunk.sourceDoc
+           MERGE (doc)-[:CONTAINS]->(chunkNode)
+           RETURN count(chunkNode) as savedChunks`,
           {
-            chunkId: chunk.id,
-            text: chunk.text,
-            sourceDoc: chunk.sourceDoc,
-            docId: docId
+            docId: docId,
+            chunks: chunkData
           }
         );
+        
+        const savedChunkCount = chunkResult.records[0]?.get('savedChunks')?.toNumber() || 0;
+        
+        if (savedChunkCount !== chunks.length) {
+          console.warn(`[Neo4j] Warning: Expected ${chunks.length} chunks but saved ${savedChunkCount} for document ${docId}`);
+        }
+      } else {
+        console.warn(`[Neo4j] Warning: No chunks to save for document ${docId}`);
       }
     });
     
+    if (isDev) {
+      console.log(`[Neo4j] Document saved successfully: ${docId}`);
+    }
+    
     return { success: true };
   } catch (error) {
-    console.error('Error saving document:', error);
+    console.error(`[Neo4j] Error saving document ${docId}:`, error);
     throw error;
   } finally {
     await session.close();
@@ -152,31 +200,40 @@ export async function saveDocument(docId, docName, chunks) {
 
 /**
  * Link chunks to entities they mention
+ * Optimized with batch operations
  */
 export async function linkChunksToEntities(chunks, entities) {
   const session = driver.session();
   
   try {
     await session.executeWrite(async (tx) => {
+      // Build list of chunk-entity pairs that should be linked
+      const mentions = [];
+      
       for (const chunk of chunks) {
-        // Extract entity IDs from chunk text
         const chunkText = chunk.text.toLowerCase();
         
         for (const entityId of entities) {
           const entityIdLower = entityId.toLowerCase();
           // Only link if entity is mentioned in chunk text
           if (chunkText.includes(entityIdLower)) {
-            await tx.run(
-              `MATCH (chunk:Chunk {id: $chunkId})
-               MATCH (entity {id: $entityId})
-               MERGE (chunk)-[:MENTIONS]->(entity)`,
-              {
-                chunkId: chunk.id,
-                entityId: entityIdLower
-              }
-            );
+            mentions.push({
+              chunkId: chunk.id,
+              entityId: entityIdLower
+            });
           }
         }
+      }
+      
+      // Batch create all MENTIONS relationships
+      if (mentions.length > 0) {
+        await tx.run(
+          `UNWIND $mentions AS mention
+           MATCH (chunk:Chunk {id: mention.chunkId})
+           MATCH (entity {id: mention.entityId})
+           MERGE (chunk)-[:MENTIONS]->(entity)`,
+          { mentions }
+        );
       }
     });
     
@@ -194,6 +251,7 @@ export async function linkChunksToEntities(chunks, entities) {
  */
 export async function getDocuments() {
   const session = driver.session();
+  const isDev = process.env.NODE_ENV !== 'production';
   
   try {
     const result = await session.run(`
@@ -212,12 +270,22 @@ export async function getDocuments() {
       name: record.get('name'),
       uploadDate: record.get('uploadDate'),
       status: record.get('status'),
-      chunks: [] // Chunks loaded separately if needed
+      chunkCount: record.get('chunkCount')?.toNumber() || 0
     }));
+    
+    // Log warning if any documents have 0 chunks
+    const docsWithNoChunks = documents.filter(d => d.chunkCount === 0);
+    if (docsWithNoChunks.length > 0) {
+      console.warn(`[Neo4j] Warning: ${docsWithNoChunks.length} document(s) have 0 chunks`);
+    }
+    
+    if (isDev && documents.length > 0) {
+      console.log(`[Neo4j] Loaded ${documents.length} document(s)`);
+    }
     
     return documents;
   } catch (error) {
-    console.error('Error getting documents:', error);
+    console.error('[Neo4j] Error getting documents:', error);
     throw error;
   } finally {
     await session.close();

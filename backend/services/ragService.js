@@ -129,9 +129,10 @@ export async function retrieveContext(query) {
     }
     
     // Log retrieval results for debugging
-    console.log(`[RAG] Query: "${query}"`);
-    console.log(`[RAG] Extracted keywords: ${keywords.join(', ')}`);
-    console.log(`[RAG] Found ${uniqueChunks.length} relevant chunks`);
+    const isDev = process.env.NODE_ENV !== 'production';
+    if (isDev) {
+      console.log(`[RAG] Query: "${query}" - Found ${uniqueChunks.length} relevant chunks`);
+    }
     
     // Strategy 4: If still no results, return some random chunks and entity list
     if (uniqueChunks.length === 0) {

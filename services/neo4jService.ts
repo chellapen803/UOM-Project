@@ -37,26 +37,52 @@ export interface SaveDocumentResponse {
   success: boolean;
 }
 
+export interface DocumentResponse {
+  id: string;
+  name: string;
+  uploadDate: string;
+  status: string;
+  chunkCount?: number;
+}
+
 /**
  * Save extracted graph data to Neo4j
+ * Includes timeout handling for large graphs
  */
 export async function saveGraphToNeo4j(
   nodes: Node[],
-  links: Link[]
+  links: Link[],
+  timeout: number = 120000 // 2 minutes default timeout
 ): Promise<SaveGraphResponse> {
   const headers = await getAuthHeaders();
-  const response = await fetch(`${API_BASE_URL}/graph/save`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ nodes, links })
-  });
+  
+  // Create AbortController for timeout
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+  
+  try {
+    const response = await fetch(`${API_BASE_URL}/graph/save`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ nodes, links }),
+      signal: controller.signal
+    });
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: response.statusText }));
-    throw new Error(`Failed to save graph: ${error.error || response.statusText}`);
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: response.statusText }));
+      throw new Error(`Failed to save graph: ${error.error || response.statusText}`);
+    }
+
+    return response.json();
+  } catch (error: any) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      throw new Error(`Request timeout: Saving ${nodes.length} nodes and ${links.length} links took too long. The backend may be processing. Try again or check server logs.`);
+    }
+    throw error;
   }
-
-  return response.json();
 }
 
 /**
@@ -93,31 +119,66 @@ export async function loadGraphFromNeo4j(): Promise<GraphDataResponse> {
 
 /**
  * Save document to Neo4j
+ * Includes timeout handling for large documents
  */
 export async function saveDocumentToNeo4j(
   docId: string,
   docName: string,
   chunks: Array<{ id: string; text: string; sourceDoc: string }>,
-  entityIds?: string[]
+  entityIds?: string[],
+  timeout: number = 300000 // 5 minutes default timeout
 ): Promise<SaveDocumentResponse> {
-  const headers = await getAuthHeaders();
-  const response = await fetch(`${API_BASE_URL}/documents/save`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      docId,
-      docName,
-      chunks,
-      entities: entityIds || []
-    })
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: response.statusText }));
-    throw new Error(`Failed to save document: ${error.error || response.statusText}`);
+  const isDev = import.meta.env.DEV;
+  
+  if (isDev) {
+    console.log(`[Frontend] Saving document: ${docName} (${chunks.length} chunks)`);
   }
+  
+  const headers = await getAuthHeaders();
+  
+  // Create AbortController for timeout
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+  
+  try {
+    const startTime = Date.now();
+    const response = await fetch(`${API_BASE_URL}/documents/save`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        docId,
+        docName,
+        chunks,
+        entities: entityIds || []
+      }),
+      signal: controller.signal
+    });
 
-  return response.json();
+    clearTimeout(timeoutId);
+    const duration = Date.now() - startTime;
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: response.statusText }));
+      console.error(`[Frontend] Failed to save document:`, error);
+      throw new Error(`Failed to save document: ${error.error || response.statusText}`);
+    }
+
+    const result = await response.json();
+    
+    if (isDev) {
+      console.log(`[Frontend] Document saved (${duration}ms)`);
+    }
+    
+    return result;
+  } catch (error: any) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      console.error(`[Frontend] Request timeout saving document (${chunks.length} chunks)`);
+      throw new Error(`Request timeout: Saving ${chunks.length} chunks took too long. The backend may be processing. Try again or check server logs.`);
+    }
+    console.error(`[Frontend] Error saving document:`, error);
+    throw error;
+  }
 }
 
 /**
@@ -211,6 +272,56 @@ export async function chatWithRAG(query: string): Promise<{ response: string; co
     context: data.context || [],
     metadata: data.metadata
   };
+}
+
+/**
+ * Load all documents from Neo4j
+ */
+export async function loadDocumentsFromNeo4j(): Promise<DocumentResponse[]> {
+  const isDev = import.meta.env.DEV;
+  const headers = await getAuthHeaders();
+  
+  // Add timeout to prevent hanging
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+  
+  try {
+    const response = await fetch(`${API_BASE_URL}/documents/list`, {
+      headers,
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: response.statusText }));
+      console.error(`[Frontend] Failed to load documents:`, error);
+      throw new Error(`Failed to load documents: ${error.error || response.statusText}`);
+    }
+
+    const data = await response.json();
+    const documents = data.documents || [];
+    
+    // Log warning if any documents have 0 chunks
+    const docsWithNoChunks = documents.filter((d: DocumentResponse) => (d.chunkCount || 0) === 0);
+    if (docsWithNoChunks.length > 0) {
+      console.warn(`[Frontend] Warning: ${docsWithNoChunks.length} document(s) have 0 chunks`);
+    }
+    
+    if (isDev && documents.length > 0) {
+      console.log(`[Frontend] Loaded ${documents.length} document(s)`);
+    }
+    
+    return documents;
+  } catch (error: any) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      console.error(`[Frontend] Request timeout loading documents`);
+      throw new Error('Request timeout: Loading documents took too long');
+    }
+    console.error(`[Frontend] Error loading documents:`, error);
+    throw error;
+  }
 }
 
 /**

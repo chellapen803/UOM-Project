@@ -23,7 +23,10 @@ if (pdfjs && typeof window !== 'undefined' && pdfjs.GlobalWorkerOptions) {
   pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js';
 }
 
-export const extractContentFromPdf = async (file: File): Promise<ProcessedPdf> => {
+export const extractContentFromPdf = async (
+  file: File,
+  onProgress?: (current: number, total: number) => void
+): Promise<ProcessedPdf> => {
   try {
     const arrayBuffer = await file.arrayBuffer();
     
@@ -42,6 +45,10 @@ export const extractContentFromPdf = async (file: File): Promise<ProcessedPdf> =
     let totalTextLength = 0;
     let totalImages = 0;
 
+    // Process pages with progress tracking
+    // For large PDFs, yield to browser periodically to prevent freezing
+    const BATCH_SIZE = 50; // Process 50 pages at a time before yielding
+    
     for (let i = 1; i <= totalPages; i++) {
       const page = await pdf.getPage(i);
       
@@ -84,6 +91,16 @@ export const extractContentFromPdf = async (file: File): Promise<ProcessedPdf> =
           totalImages++;
         }
       }
+      
+      // Report progress
+      if (onProgress) {
+        onProgress(i, totalPages);
+      }
+      
+      // Yield to browser every BATCH_SIZE pages to prevent UI freezing
+      if (i % BATCH_SIZE === 0) {
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
     }
 
     return {
@@ -99,6 +116,7 @@ export const extractContentFromPdf = async (file: File): Promise<ProcessedPdf> =
     if (error.name === 'PasswordException') msg = "The PDF is password protected.";
     if (error.name === 'InvalidPDFException') msg = "The file is not a valid PDF.";
     if (error.message && error.message.includes('worker')) msg = "PDF Worker failed to load. Please check your internet connection and reload.";
+    if (error.message && error.message.includes('memory')) msg = "PDF is too large. Try splitting it into smaller files.";
     
     throw new Error(msg);
   }

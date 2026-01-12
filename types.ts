@@ -27,6 +27,7 @@ export interface IngestedDocument {
   uploadDate: string;
   status: 'processing' | 'ready' | 'error';
   chunks: DocumentChunk[];
+  chunkCount?: number; // Optional: used when loaded from Neo4j (chunks array may be empty)
 }
 
 export interface RGCNMetadata {

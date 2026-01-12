@@ -12,8 +12,8 @@ const PORT = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors());
-app.use(express.json({ limit: '10mb' })); // Increase limit to handle large graph data
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '100mb' })); // Increased limit to handle large PDFs (30MB+ files with 900+ pages)
+app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
 // Routes (keep /api prefix - will be handled by Vercel routing)
 app.use('/api/graph', graphRoutes);

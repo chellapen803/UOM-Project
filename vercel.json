@@ -8,6 +8,11 @@
       "source": "/api/(.*)",
       "destination": "/api"
     }
-  ]
+  ],
+  "functions": {
+    "api/**/*.js": {
+      "maxDuration": 60
+    }
+  }
 }
 

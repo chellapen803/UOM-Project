@@ -12,6 +12,7 @@ import {
   saveGraphToNeo4j, 
   loadGraphFromNeo4j, 
   saveDocumentToNeo4j,
+  loadDocumentsFromNeo4j,
   chatWithRAG,
   checkRGCNHealth,
   RGCNHealthResponse
@@ -81,6 +82,12 @@ const App = () => {
   const [pdfStats, setPdfStats] = useState({ textLen: 0, imgCount: 0 });
   
   const [isParsingPdf, setIsParsingPdf] = useState(false);
+  const [pdfParseProgress, setPdfParseProgress] = useState({ current: 0, total: 0 });
+  const [ingestProgress, setIngestProgress] = useState<{ current: number; total: number; phase: string }>({
+    current: 0,
+    total: 0,
+    phase: ''
+  });
   
   // R-GCN Status
   const [rgcnStatus, setRgcnStatus] = useState<'active' | 'inactive' | 'checking'>('checking');
@@ -112,6 +119,30 @@ const App = () => {
     };
     
     loadInitialGraph();
+  }, []);
+
+  // Load documents from Neo4j on mount
+  useEffect(() => {
+    const loadInitialDocuments = async () => {
+      try {
+        const docs = await loadDocumentsFromNeo4j();
+        // Convert to IngestedDocument format
+        const ingestedDocs: IngestedDocument[] = docs.map(doc => ({
+          id: doc.id,
+          name: doc.name,
+          uploadDate: doc.uploadDate ? new Date(doc.uploadDate).toLocaleDateString() : new Date().toLocaleDateString(),
+          status: (doc.status as 'processing' | 'ready' | 'error') || 'ready',
+          chunks: [], // Chunks loaded separately if needed
+          chunkCount: doc.chunkCount || 0 // Preserve chunk count from backend
+        }));
+        setDocuments(ingestedDocs);
+      } catch (error) {
+        console.warn('[App] Failed to load documents from Neo4j on mount:', error);
+        // Don't show error to user - just start with empty list
+      }
+    };
+    
+    loadInitialDocuments();
   }, []);
 
   // Check R-GCN status on mount and periodically
@@ -206,9 +237,12 @@ const App = () => {
     setUploadText(''); 
     setPdfPages([]);
     setPdfStats({ textLen: 0, imgCount: 0 });
+    setPdfParseProgress({ current: 0, total: 0 });
 
     try {
-        const result = await extractContentFromPdf(file);
+        const result = await extractContentFromPdf(file, (current, total) => {
+          setPdfParseProgress({ current, total });
+        });
         
         setPdfPages(result.pages);
         setPdfStats({
@@ -229,6 +263,7 @@ const App = () => {
         setPdfFileName('');
     } finally {
         setIsParsingPdf(false);
+        setPdfParseProgress({ current: 0, total: 0 });
     }
   };
 
@@ -244,6 +279,7 @@ const App = () => {
     if (!uploadText && pdfPages.length === 0) return;
     setIsProcessing(true);
     setProcessingStatus('Initializing ingestion...');
+    setIngestProgress({ current: 0, total: 0, phase: 'Initializing' });
 
     const newDocId = Math.random().toString(36).substr(2, 9);
     const docName = uploadMode === 'pdf' && pdfFileName ? pdfFileName : `Document ${documents.length + 1}`;
@@ -260,18 +296,24 @@ const App = () => {
             sourceDoc: newDocId
         }));
 
+        // Total steps: 1 (NLP extraction) + 2 (graph save + doc save)
+        setIngestProgress({ current: 0, total: 3, phase: 'Preparing PDF content' });
         setProcessingStatus(`Processing ${pdfPages.length} pages using NLP extraction...`);
         
         // Extract graph from all pages at once (NLP is fast, no need for batching)
         const extracted = extractGraphFromMixedContent(pdfPages);
         newNodes = [...newNodes, ...extracted.nodes];
         newLinks = [...newLinks, ...extracted.links];
+        setIngestProgress({ current: 1, total: 3, phase: 'Entities extracted from PDF' });
 
     } 
     // --- STRATEGY B: RAW TEXT ---
     else {
         const chunksRaw = chunkText(uploadText);
         chunks = chunksRaw.map(text => ({ id: Math.random().toString(36), text, sourceDoc: newDocId }));
+        const totalSteps = chunks.length + 2; // chunks processing + graph save + doc save
+        let currentStep = 0;
+        setIngestProgress({ current: 0, total: totalSteps, phase: 'Chunking text' });
         
         for (let i = 0; i < chunks.length; i++) {
           setProcessingStatus(`Extracting entities from chunk ${i + 1} of ${chunks.length}...`);
@@ -279,18 +321,38 @@ const App = () => {
           const extracted = extractGraphFromChunk(chunk.text);
           newNodes = [...newNodes, ...extracted.nodes];
           newLinks = [...newLinks, ...extracted.links];
+          currentStep += 1;
+          setIngestProgress({ current: currentStep, total: totalSteps, phase: `Extracted entities from chunk ${i + 1}` });
         }
     }
 
     setProcessingStatus('Saving to Neo4j database...');
 
     try {
+      // Calculate timeout based on document size (larger docs need more time)
+      // Base timeout: 2 minutes for graph, 5 minutes for document
+      // Add 1 second per 100 chunks for very large documents
+      const graphTimeout = 120000 + Math.max(0, (chunks.length - 100) * 10);
+      const docTimeout = 300000 + Math.max(0, (chunks.length - 100) * 50);
+      
       // Save graph data to Neo4j
-      await saveGraphToNeo4j(newNodes, newLinks);
+      setIngestProgress(prev => ({
+        current: Math.max(prev.current, prev.total > 0 ? prev.total - 2 : 0),
+        total: prev.total || (chunks.length > 0 ? chunks.length + 2 : 3),
+        phase: 'Saving graph structure to Neo4j'
+      }));
+      await saveGraphToNeo4j(newNodes, newLinks, graphTimeout);
       
       // Save document and chunks to Neo4j
       const entityIds = newNodes.map(n => n.id);
-      await saveDocumentToNeo4j(newDocId, docName, chunks, entityIds);
+      setProcessingStatus(`Saving document chunks (${chunks.length} total)...`);
+      setIngestProgress(prev => ({
+        current: (prev.total || (chunks.length > 0 ? chunks.length + 2 : 3)) - 1,
+        total: prev.total || (chunks.length > 0 ? chunks.length + 2 : 3),
+        phase: 'Saving document and chunks to Neo4j'
+      }));
+      
+      await saveDocumentToNeo4j(newDocId, docName, chunks, entityIds, docTimeout);
       
       // Update local documents state immediately (data is saved)
       const newDoc: IngestedDocument = {
@@ -298,7 +360,8 @@ const App = () => {
         name: docName,
         uploadDate: new Date().toLocaleDateString(),
         status: 'ready',
-        chunks
+        chunks,
+        chunkCount: chunks.length // Set chunk count for display
       };
       
       setDocuments(prev => [...prev, newDoc]);
@@ -319,6 +382,7 @@ const App = () => {
       // Clear processing immediately - data is saved and state is updated
       setIsProcessing(false);
       setProcessingStatus('');
+      setIngestProgress({ current: 0, total: 0, phase: '' });
       
       // Clear upload state
       if (uploadMode === 'text') {
@@ -339,9 +403,10 @@ const App = () => {
         });
       
     } catch (error: any) {
-      console.error('Error saving to Neo4j:', error);
+      console.error('[App] Error saving to Neo4j:', error);
       setIsProcessing(false);
       setProcessingStatus('');
+      setIngestProgress({ current: 0, total: 0, phase: '' });
       alert(`Failed to save to database: ${error.message || 'Unknown error'}. Please ensure the backend server is running.`);
       // Don't update state if save failed
       return;
@@ -601,8 +666,21 @@ const App = () => {
                                                     <div className="flex-1 min-w-0 text-left">
                                                         <p className="text-sm font-medium text-blue-900 truncate">{pdfFileName}</p>
                                                         <p className="text-xs text-blue-700">
-                                                            {pdfStats.imgCount > 0 ? `${pdfStats.imgCount} pages` : 'Text only'}
+                                                            {isParsingPdf && pdfParseProgress.total > 0 
+                                                              ? `Processing page ${pdfParseProgress.current} of ${pdfParseProgress.total}...`
+                                                              : pdfPages.length > 0 
+                                                                ? `${pdfPages.length} pages` 
+                                                                : 'Processing...'}
+                                                            {pdfStats.imgCount > 0 && ` (${pdfStats.imgCount} images)`}
                                                         </p>
+                                                        {isParsingPdf && pdfParseProgress.total > 0 && (
+                                                          <div className="mt-1 w-full bg-blue-200 rounded-full h-1">
+                                                            <div 
+                                                              className="bg-blue-600 h-1 rounded-full transition-all duration-300" 
+                                                              style={{ width: `${(pdfParseProgress.current / pdfParseProgress.total) * 100}%` }}
+                                                            />
+                                                          </div>
+                                                        )}
                                                     </div>
                                                     <Button variant="ghost" size="icon" onClick={clearPdfSelection} className="h-8 w-8 text-blue-500 hover:text-blue-700 hover:bg-blue-100">
                                                         <X size={16} />
@@ -628,19 +706,44 @@ const App = () => {
                                 )}
                             </div>
                         </CardContent>
-                        <CardFooter className="justify-end gap-3 border-t bg-slate-50/50 p-4">
-                             {isProcessing && (
-                                <div className="flex items-center gap-2 text-sm text-slate-500 mr-2">
-                                    <Loader2 size={14} className="animate-spin" />
-                                    {processingStatus}
+                        <CardFooter className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-3 border-t bg-slate-50/50 p-4">
+                            {isProcessing && (
+                                <div className="flex flex-col gap-1 text-sm text-slate-500 sm:mr-2 max-w-xs sm:max-w-sm">
+                                    <div className="flex items-center gap-2">
+                                        <Loader2 size={14} className="animate-spin" />
+                                        <span className="truncate">
+                                            {processingStatus || 'Processing document...'}
+                                        </span>
+                                    </div>
+                                    {ingestProgress.total > 0 && (
+                                        <span className="text-xs text-slate-400">
+                                            Step {Math.min(ingestProgress.current + 1, ingestProgress.total)} of {ingestProgress.total}
+                                            {ingestProgress.phase ? ` • ${ingestProgress.phase}` : ''}
+                                        </span>
+                                    )}
                                 </div>
                             )}
                             <Button 
                                 onClick={handleUpload} 
                                 disabled={isProcessing || (!uploadText && pdfPages.length === 0) || isParsingPdf}
                             >
+                                {isProcessing && (
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                )}
                                 {isProcessing ? 'Processing...' : 'Ingest & Build Graph'}
                             </Button>
+                            {isProcessing && (
+                                <div className="w-full sm:w-64 h-1 bg-slate-200 rounded-full overflow-hidden">
+                                    {ingestProgress.total > 0 ? (
+                                        <div
+                                            className="h-1 bg-blue-500 rounded-full transition-all duration-300"
+                                            style={{ width: `${Math.min(100, ((ingestProgress.current + 1) / ingestProgress.total) * 100)}%` }}
+                                        />
+                                    ) : (
+                                        <div className="h-1 w-full bg-blue-500 animate-pulse rounded-full" />
+                                    )}
+                                </div>
+                            )}
                         </CardFooter>
                     </Card>
 
@@ -660,7 +763,7 @@ const App = () => {
                                             <span className="truncate font-medium text-slate-700">{doc.name}</span>
                                         </div>
                                         <Badge variant="secondary" className="text-xs font-normal">
-                                            {doc.chunks.length} chunks
+                                            {doc.chunkCount !== undefined ? doc.chunkCount : doc.chunks.length} chunks
                                         </Badge>
                                     </div>
                                 ))}

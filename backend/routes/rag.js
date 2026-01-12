@@ -41,7 +41,10 @@ router.post('/chat', verifyToken, requireAuth, async (req, res) => {
     // Step 1: Retrieve context (try R-GCN enhanced, fallback to standard)
     if (rgcnHealth.available) {
       try {
-        console.log('[RAG] Using R-GCN enhanced retrieval');
+        const isDev = process.env.NODE_ENV !== 'production';
+        if (isDev) {
+          console.log('[RAG] Using R-GCN enhanced retrieval');
+        }
         const rgcnResult = await retrieveContextWithRGCN(query, extractKeywords);
         context = rgcnResult.context;
         metadata = rgcnResult.metadata || metadata;
@@ -56,7 +59,10 @@ router.post('/chat', verifyToken, requireAuth, async (req, res) => {
         };
       }
     } else {
-      console.log('[RAG] R-GCN service unavailable, using standard retrieval');
+      const isDev = process.env.NODE_ENV !== 'production';
+      if (isDev) {
+        console.log('[RAG] R-GCN service unavailable, using standard retrieval');
+      }
       context = await retrieveContext(query);
       metadata = { rgcnUsed: false, retrievalMethod: 'standard' };
     }
