@@ -1,9 +1,112 @@
 import express from 'express';
-import { retrieveContext, findRelatedEntities } from '../services/ragService.js';
-import { generateRAGResponse } from '../services/geminiService.js';
+import { retrieveContext, findRelatedEntities, extractKeywords } from '../services/ragService.js';
+import { generateRAGResponse, cleanContextChunks } from '../services/geminiService.js';
 import { verifyToken, requireAuth } from '../middleware/auth.js';
 import { checkRGCNHealth, retrieveContextWithRGCN } from '../services/rgcnService.js';
-import { extractKeywords } from '../services/ragService.js';
+
+/**
+ * Intelligently extract relevant answer from context chunks without LLM
+ * Finds chunks that directly answer the question and extracts key sentences
+ */
+function extractAnswerFromContext(query, context) {
+  if (!context || context.length === 0) {
+    return null;
+  }
+
+  const cleanedContext = cleanContextChunks(context);
+  const queryLower = query.toLowerCase();
+  const keywords = extractKeywords(query);
+  
+  // Find chunks that contain the query term or main keywords
+  const relevantChunks = cleanedContext.filter(chunk => {
+    const chunkLower = chunk.toLowerCase();
+    // Check if chunk contains the query or main keywords
+    return chunkLower.includes(queryLower) || 
+           keywords.some(kw => chunkLower.includes(kw.toLowerCase()));
+  });
+
+  if (relevantChunks.length === 0) {
+    return null;
+  }
+
+  // Try to find definition or explanation patterns
+  const definitionPatterns = [
+    /(?:is|are|refers to|means|defined as|can be defined as|is a|is an)\s+([^.!?]+(?:\.|!|\?))/gi,
+    /([A-Z][^.!?]*\b(?:pretexting|pretext)\b[^.!?]*(?:\.|!|\?))/gi,
+    /(?:pretexting|pretext)\s+(?:is|refers to|means|involves|is a technique)[^.!?]*(?:\.|!|\?)/gi,
+  ];
+
+  // Look for sentences that define or explain the topic
+  let bestAnswer = null;
+  let bestScore = 0;
+
+  for (const chunk of relevantChunks) {
+    // Split into sentences
+    const sentences = chunk.split(/[.!?]+/).filter(s => s.trim().length > 10);
+    
+    for (const sentence of sentences) {
+      const sentenceLower = sentence.toLowerCase();
+      
+      // Score based on relevance
+      let score = 0;
+      
+      // Higher score if contains query term
+      if (sentenceLower.includes(queryLower)) {
+        score += 10;
+      }
+      
+      // Higher score if contains definition words
+      if (/\b(is|are|means|defined|refers to|technique|method|attack|type)\b/i.test(sentence)) {
+        score += 5;
+      }
+      
+      // Higher score if contains main keywords
+      keywords.forEach(kw => {
+        if (sentenceLower.includes(kw.toLowerCase())) {
+          score += 3;
+        }
+      });
+      
+      // Prefer longer sentences (more likely to be definitions)
+      if (sentence.trim().length > 50 && sentence.trim().length < 300) {
+        score += 2;
+      }
+      
+      // Prefer sentences that start with the topic
+      if (new RegExp(`^\\s*${keywords[0] || queryLower.split(' ')[0]}`, 'i').test(sentence)) {
+        score += 5;
+      }
+      
+      if (score > bestScore && score >= 8) {
+        bestScore = score;
+        bestAnswer = sentence.trim();
+      }
+    }
+  }
+
+  // If we found a good answer, try to get a bit more context
+  if (bestAnswer) {
+    // Try to find follow-up sentences that add context
+    for (const chunk of relevantChunks) {
+      const sentences = chunk.split(/[.!?]+/).filter(s => s.trim().length > 10);
+      const bestIndex = sentences.findIndex(s => s.trim() === bestAnswer);
+      
+      if (bestIndex !== -1 && sentences.length > bestIndex + 1) {
+        // Add next 1-2 sentences for context
+        const additionalContext = sentences.slice(bestIndex + 1, bestIndex + 3)
+          .filter(s => s.trim().length > 20)
+          .join('. ')
+          .trim();
+        
+        if (additionalContext) {
+          bestAnswer = `${bestAnswer}. ${additionalContext}`;
+        }
+      }
+    }
+  }
+
+  return bestAnswer;
+}
 
 const router = express.Router();
 
@@ -82,14 +185,26 @@ router.post('/chat', verifyToken, requireAuth, async (req, res) => {
       if (geminiError.message?.includes('Rate limit') || geminiError.message?.includes('quota')) {
         console.warn('Gemini rate limited, returning context-only response');
         
-        // Return a helpful message with the context
-        const contextSummary = context.length > 0 
-          ? `Here's what I found in the knowledge graph:\n\n${context.join('\n\n---\n\n')}`
-          : 'No relevant context found in the knowledge graph.';
+        // Clean context chunks to remove page numbers
+        const cleanedContext = cleanContextChunks(context);
+        
+        // Try to intelligently extract an answer from the context
+        const extractedAnswer = extractAnswerFromContext(query, cleanedContext);
+        
+        let contextSummary = '';
+        if (extractedAnswer) {
+          // We found a relevant answer in the context - just return it naturally
+          contextSummary = extractedAnswer;
+        } else if (cleanedContext.length > 0) {
+          // Couldn't find a direct answer, but we have context
+          contextSummary = `I found relevant information about "${query}" in the knowledge graph (${cleanedContext.length} source${cleanedContext.length > 1 ? 's' : ''}), but I cannot synthesize it into a complete answer right now.\n\nPlease check the "View Sources" section below to see the retrieved information.`;
+        } else {
+          contextSummary = 'No relevant context found in the knowledge graph for this query.';
+        }
         
         res.json({
-          response: `⚠️ **Rate Limit Notice**: ${geminiError.message}\n\n${contextSummary}\n\n*Note: Full AI-generated response unavailable due to API rate limits. Please try again later or upgrade your Gemini API plan.*`,
-          context,
+          response: contextSummary,
+          context: cleanedContext, // Return cleaned context
           metadata,
           warning: 'rate_limit_exceeded'
         });

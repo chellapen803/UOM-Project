@@ -17,6 +17,30 @@ if (API_KEY) {
 }
 
 /**
+ * Clean context chunks by removing page number markers and other metadata
+ * that could cause the LLM to list chunks instead of synthesizing
+ * Exported for use in rate limit fallback scenarios
+ */
+export function cleanContextChunks(chunks) {
+  if (!chunks || chunks.length === 0) return [];
+  
+  return chunks.map(chunk => {
+    if (typeof chunk !== 'string') return chunk;
+    
+    // Remove page number markers like [Page 158], [Page X], etc.
+    let cleaned = chunk.replace(/\[Page\s+\d+\]/gi, '');
+    
+    // Remove standalone page references at the start of lines
+    cleaned = cleaned.replace(/^\s*\[\d+\]\s*/gm, '');
+    
+    // Remove excessive whitespace that might be left
+    cleaned = cleaned.trim();
+    
+    return cleaned;
+  }).filter(chunk => chunk && chunk.trim().length > 0);
+}
+
+/**
  * Generate RAG response using Gemini API
  * This is called from the backend to keep API keys secure
  */
@@ -29,29 +53,44 @@ export async function generateRAGResponse(query, context) {
     throw new Error("Failed to initialize the AI client. Please check your API key configuration.");
   }
 
-  const contextBlock = context && context.length > 0 
-    ? context.join("\n\n---\n\n") 
+  // Clean context chunks to remove page numbers and metadata
+  const cleanedContext = cleanContextChunks(context);
+  
+  const contextBlock = cleanedContext && cleanedContext.length > 0 
+    ? cleanedContext.join("\n\n---\n\n") 
     : "No relevant context found in the knowledge graph for this query.";
 
-  const prompt = `You are a helpful assistant for a Knowledge Graph system.
-Your role is to answer questions based on the Context information retrieved from the knowledge graph.
+  const prompt = `You are a helpful AI assistant answering questions based on information from a knowledge graph.
 
-**Instructions:**
-1. Carefully analyze the Context provided below
-2. Extract relevant information that relates to the user's question
-3. If the Context contains relevant information (even if partial), synthesize it into a helpful answer
-4. If the Context mentions related concepts, entities, or topics, use them to provide context-aware answers
-5. Only say "not enough information" if the Context is completely unrelated to the question
-6. If the Context lists entities or concepts, try to infer relationships or provide general knowledge that connects to the question
+**CRITICAL INSTRUCTIONS:**
+1. **PRIORITIZE DEFINITION/EXPLANATION CHUNKS**: If the context contains chunks that start with the topic or define it (e.g., "MD5 was released..." or "Pretexting is..."), use those FIRST and most prominently in your answer
+2. **Write a direct, natural answer** to the user's question as if you're an expert explaining the topic
+3. **Start with the definition**: If there's a definition-style chunk (starting with the topic name), begin your answer with that definition/explanation
+4. **Then add context**: After the definition, you can add related details from other chunks (vulnerabilities, uses, etc.)
+5. **Synthesize and summarize** the relevant information into a clear, coherent response
+6. **DO NOT list page numbers, chunk numbers, or references** (ignore any "[Page X]" markers in the context)
+7. **DO NOT repeat the context verbatim** - instead, extract the key information and explain it naturally
+8. **DO NOT format your response as a list of chunks or citations** - write it as a flowing, natural explanation
+9. If multiple chunks discuss the same topic, **prioritize definition chunks**, then combine other relevant information
+10. **Start directly answering** the question without phrases like "Based on the context" or "Here's what I found"
+11. Use clear, readable formatting (paragraphs, bullet points if helpful, but not raw chunk dumps)
+
+**Example of GOOD response for "explain MD5":**
+"MD5 (Message Digest 5) was released in 1991 by Ron Rivest as the next version of his message digest algorithm. It processes 512-bit blocks of the message, uses four distinct rounds of computation, and produces a digest of 128 bits. However, security researchers have demonstrated that MD5 is subject to collisions, which prevents its use for ensuring message integrity."
+
+**Example of BAD response (DO NOT DO THIS):**
+"[Page 158] Pretexting is mentioned as a type of attack... [Page 142] Chapter 4 discusses pretexting... [Page 149] Pretexting is described as..."
+
+**IMPORTANT**: The context chunks are ordered by relevance - the FIRST chunk(s) are most likely to contain the definition/explanation you need. Start your answer with information from the first chunk(s), then add related details from other chunks.
 
 ---
-Context from Knowledge Graph:
+Context from Knowledge Graph (ordered by relevance - most relevant first):
 ${contextBlock}
 ---
 
 User Question: ${query}
 
-Please provide a helpful and informative answer. If the context contains any relevant information (even tangentially related), use it to provide a thoughtful response.`;
+Provide a clear, direct answer to the question. Start with the definition/explanation from the most relevant chunks (usually the first ones), then add related details. Write naturally as if explaining to a colleague, not as if listing search results.`;
 
   try {
     const response = await ai.models.generateContent({
