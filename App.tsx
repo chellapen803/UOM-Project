@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { AppView, IngestedDocument, GraphData, Message } from './types';
 import GraphVisualizer from './components/GraphVisualizer';
+import { MarkdownMessage } from './components/MarkdownMessage';
 import { chunkText, extractGraphFromChunk, extractGraphFromMixedContent } from './services/textProcessingService';
 import { extractContentFromPdf, PdfPage } from './services/pdfService';
 import { 
@@ -903,7 +904,11 @@ const App = () => {
                                             ? "bg-blue-600 text-white rounded-br-none" 
                                             : "bg-white border border-slate-100 text-slate-800 rounded-tl-none"
                                     )}>
-                                        {msg.content}
+                                        {msg.role === 'user' ? (
+                                            <span className="whitespace-pre-wrap">{msg.content}</span>
+                                        ) : (
+                                            <MarkdownMessage content={msg.content} />
+                                        )}
                                     </div>
                                     
                                     {msg.retrievedContext && msg.retrievedContext.length > 0 && (
