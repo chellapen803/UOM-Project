@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import graphRoutes from './routes/graph.js';
 import documentRoutes from './routes/documents.js';
 import ragRoutes from './routes/rag.js';
+import quizRoutes from './routes/quiz.js';
 
 dotenv.config();
 
@@ -19,6 +20,7 @@ app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 app.use('/api/graph', graphRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/rag', ragRoutes);
+app.use('/api/quiz', quizRoutes);
 
 // Health check (accessible at /api/health)
 app.get('/health', (req, res) => {

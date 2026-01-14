@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { 
   Layout, Upload, Network, MessageSquare, Database, FileText, Share2, 
   Search, Bot, FileUp, X, Loader2, Image as ImageIcon, FileType2, 
-  Send, User, Settings, CheckCircle2, AlertCircle, LogOut, Shield 
+  Send, User, Settings, CheckCircle2, AlertCircle, LogOut, Shield, BookOpen
 } from 'lucide-react';
 import { AppView, IngestedDocument, GraphData, Message } from './types';
 import GraphVisualizer from './components/GraphVisualizer';
@@ -30,6 +30,7 @@ import {
 import { cn } from './lib/utils';
 import { useAuth } from './contexts/AuthContext';
 import { Auth } from './components/Auth';
+import Quiz from './components/Quiz';
 
 const SAMPLE_TEXT = `
 Apple Inc. is an American multinational technology company headquartered in Cupertino, California, that designs, develops, and sells consumer electronics, computer software, and online services. 
@@ -515,6 +516,7 @@ const App = () => {
         <nav className="flex-1 px-3 space-y-1">
           <div className="px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Workspace</div>
           <NavItem view={AppView.USER_CHAT} icon={MessageSquare} label="Chat" />
+          <NavItem view={AppView.QUIZ} icon={BookOpen} label="Quiz" />
           
           {isSuperuser() && (
             <>
@@ -833,6 +835,11 @@ const App = () => {
                  </div>
             </div>
           )
+        )}
+
+        {/* VIEW: QUIZ */}
+        {currentView === AppView.QUIZ && (
+          <Quiz />
         )}
 
         {/* VIEW: CHAT */}

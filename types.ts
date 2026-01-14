@@ -52,6 +52,7 @@ export enum AppView {
   ADMIN_UPLOAD = 'ADMIN_UPLOAD',
   ADMIN_GRAPH = 'ADMIN_GRAPH',
   USER_CHAT = 'USER_CHAT',
+  QUIZ = 'QUIZ',
 }
 
 export type UserRole = 'user' | 'superuser';
