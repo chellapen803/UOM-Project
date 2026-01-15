@@ -51,6 +51,7 @@ export interface Message {
 export enum AppView {
   ADMIN_UPLOAD = 'ADMIN_UPLOAD',
   ADMIN_GRAPH = 'ADMIN_GRAPH',
+  ADMIN_QUIZ_INGEST = 'ADMIN_QUIZ_INGEST',
   USER_CHAT = 'USER_CHAT',
   QUIZ = 'QUIZ',
 }

@@ -1,6 +1,7 @@
 import express from 'express';
-import { verifyToken, requireAuth } from '../middleware/auth.js';
+import { verifyToken, requireAuth, requireSuperuser } from '../middleware/auth.js';
 import { GoogleGenAI } from "@google/genai";
+import { saveQuizQuestions, getQuizQuestions, hasQuizQuestions } from '../services/neo4jService.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -145,15 +146,63 @@ function parseJsonWithRepair(jsonText) {
 }
 
 /**
+ * Check if quiz questions exist (for all authenticated users)
+ */
+router.get('/check', verifyToken, requireAuth, async (req, res) => {
+  try {
+    const exists = await hasQuizQuestions();
+    res.json({ hasQuestions: exists });
+  } catch (error) {
+    console.error('Error checking quiz questions:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Get all quiz questions (for all authenticated users)
+ */
+router.get('/questions', verifyToken, requireAuth, async (req, res) => {
+  try {
+    const questions = await getQuizQuestions();
+    res.json({
+      success: true,
+      questions: questions,
+      count: questions.length
+    });
+  } catch (error) {
+    console.error('Error getting quiz questions:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
  * Extract questions and answers from PDF content
  * Expects pages array with text and/or image content
+ * Requires superuser access
  */
-router.post('/extract-questions', verifyToken, requireAuth, async (req, res) => {
+router.post('/extract-questions', verifyToken, requireSuperuser, async (req, res) => {
   try {
     const { pages } = req.body;
     
     if (!pages || !Array.isArray(pages) || pages.length === 0) {
       return res.status(400).json({ error: 'pages array is required' });
+    }
+
+    // Check if questions already exist globally
+    try {
+      const existingQuestions = await getQuizQuestions();
+      if (existingQuestions && existingQuestions.length > 0) {
+        console.log(`[Quiz] Found ${existingQuestions.length} existing questions`);
+        return res.json({
+          success: true,
+          questions: existingQuestions,
+          count: existingQuestions.length,
+          cached: true
+        });
+      }
+    } catch (error) {
+      console.warn(`[Quiz] Could not check for existing questions:`, error.message);
+      // Continue with extraction if check fails
     }
 
     if (!API_KEY || !ai) {
@@ -200,7 +249,8 @@ Return the results as a JSON object with a "questions" array where each question
 - question: the question text
 - options: object with 4 options (A, B, C, D) - if less than 4 options exist, use what's available
 - correctAnswer: the letter of the correct answer (A, B, C, or D)
-- explanation: brief explanation of why this answer is correct (optional)
+- explanation: brief explanation of why the correct answer is correct (optional)
+- optionExplanations: object with explanations for each option (A, B, C, D) explaining why each option is correct or incorrect (optional but highly recommended)
 
 Format (return ONLY this JSON, no markdown):
 {
@@ -215,10 +265,18 @@ Format (return ONLY this JSON, no markdown):
         "D": "Option D text"
       },
       "correctAnswer": "A",
-      "explanation": "Brief explanation"
+      "explanation": "Brief explanation of why A is correct",
+      "optionExplanations": {
+        "A": "Explanation of why A is correct",
+        "B": "Explanation of why B is incorrect",
+        "C": "Explanation of why C is incorrect",
+        "D": "Explanation of why D is incorrect"
+      }
     }
   ]
 }
+
+IMPORTANT: If the source material provides explanations for why each option is correct or incorrect, include them in optionExplanations. This helps users understand not just the right answer, but why other options are wrong.
 
 Content:
 ${textContent}`;
@@ -295,7 +353,8 @@ ${textContent}`;
           question: q.question.trim(),
           options: q.options,
           correctAnswer: correctAnswer,
-          explanation: q.explanation || ''
+          explanation: q.explanation || '',
+          optionExplanations: q.optionExplanations || {}
         };
       }).filter(q => q !== null); // Remove invalid questions
 
@@ -361,30 +420,26 @@ ${textContent}`;
       return;
     }
     
+    // Save questions to Neo4j for future use (globally)
+    try {
+      await saveQuizQuestions(allQuestions);
+      console.log(`[Quiz] Saved ${allQuestions.length} questions to database`);
+    } catch (saveError) {
+      console.error(`[Quiz] Failed to save questions to database:`, saveError);
+      // Continue even if save fails - questions are still returned
+    }
+    
     // Send final result
     res.write(JSON.stringify({
       type: 'complete',
       success: true,
       questions: allQuestions,
-      count: allQuestions.length
+      count: allQuestions.length,
+      cached: false
     }) + '\n');
     
     res.end();
     return;
-
-    // If no questions were extracted, return error
-    if (allQuestions.length === 0) {
-      return res.status(500).json({ 
-        error: 'Failed to extract any questions from PDF. The PDF may not contain questions in a recognizable format, or all batches failed to parse.',
-        details: `Processed ${totalBatches} batch(es) but found no valid questions`
-      });
-    }
-
-    res.json({ 
-      success: true, 
-      questions: allQuestions,
-      count: allQuestions.length
-    });
 
   } catch (error) {
     console.error('Error extracting questions:', error);

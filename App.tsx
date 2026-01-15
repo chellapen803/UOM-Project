@@ -31,6 +31,7 @@ import { cn } from './lib/utils';
 import { useAuth } from './contexts/AuthContext';
 import { Auth } from './components/Auth';
 import Quiz from './components/Quiz';
+import IngestQuizData from './components/IngestQuizData';
 
 const SAMPLE_TEXT = `
 Apple Inc. is an American multinational technology company headquartered in Cupertino, California, that designs, develops, and sells consumer electronics, computer software, and online services. 
@@ -522,6 +523,7 @@ const App = () => {
             <>
               <div className="mt-8 px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Admin</div>
               <NavItem view={AppView.ADMIN_UPLOAD} icon={Upload} label="Ingest Data" />
+              <NavItem view={AppView.ADMIN_QUIZ_INGEST} icon={BookOpen} label="Ingest Quiz Data" />
               <NavItem view={AppView.ADMIN_GRAPH} icon={Network} label="Graph View" />
             </>
           )}
@@ -838,6 +840,10 @@ const App = () => {
         )}
 
         {/* VIEW: QUIZ */}
+        {currentView === AppView.ADMIN_QUIZ_INGEST && (
+          <IngestQuizData />
+        )}
+
         {currentView === AppView.QUIZ && (
           <Quiz />
         )}

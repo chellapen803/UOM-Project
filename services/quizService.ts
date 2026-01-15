@@ -10,7 +10,13 @@ export interface QuizQuestion {
     D: string;
   };
   correctAnswer: 'A' | 'B' | 'C' | 'D';
-  explanation?: string;
+  explanation?: string; // General explanation or explanation for correct answer
+  optionExplanations?: {
+    A?: string;
+    B?: string;
+    C?: string;
+    D?: string;
+  }; // Explanations for each option (why it's correct or incorrect)
 }
 
 export interface ExtractQuestionsResponse {
@@ -31,6 +37,42 @@ export interface ExtractionProgress {
 }
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+
+/**
+ * Check if quiz questions exist
+ */
+export async function checkQuizQuestions(token: string): Promise<{ hasQuestions: boolean }> {
+  const response = await fetch(`${API_BASE_URL}/quiz/check`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: Failed to check quiz questions`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Get all quiz questions
+ */
+export async function getQuizQuestionsFromApi(token: string): Promise<ExtractQuestionsResponse> {
+  const response = await fetch(`${API_BASE_URL}/quiz/questions`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: Failed to get quiz questions`);
+  }
+
+  return response.json();
+}
 
 /**
  * Extract questions from PDF pages with progress updates

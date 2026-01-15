@@ -1,31 +1,20 @@
 import React, { useState, useRef } from 'react';
 import { 
-  Upload, FileText, Loader2, CheckCircle2, X, ChevronLeft, ChevronRight, 
-  AlertCircle, Play, RotateCcw, Award, Clock, BookOpen
+  Loader2, CheckCircle2, ChevronLeft, ChevronRight, 
+  AlertCircle, Play, RotateCcw, Award, Clock, BookOpen, X
 } from 'lucide-react';
-import { extractContentFromPdf, PdfPage } from '../services/pdfService';
-import { extractQuestionsFromPdf, QuizQuestion } from '../services/quizService';
-import { Button, Input, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter, Badge, Alert, AlertTitle, AlertDescription } from './ui';
+import { QuizQuestion, checkQuizQuestions, getQuizQuestionsFromApi } from '../services/quizService';
+import { Button, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter, Badge } from './ui';
 import { cn } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
 
-type QuizState = 'upload' | 'extracting' | 'ready' | 'taking' | 'review';
+type QuizState = 'ready' | 'taking' | 'review';
 
 const Quiz = () => {
   const { currentUser } = useAuth();
-  const [state, setState] = useState<QuizState>('upload');
-  const [pdfFileName, setPdfFileName] = useState<string>('');
-  const [pdfPages, setPdfPages] = useState<PdfPage[]>([]);
-  const [isParsingPdf, setIsParsingPdf] = useState(false);
-  const [pdfParseProgress, setPdfParseProgress] = useState({ current: 0, total: 0 });
-  const [isExtracting, setIsExtracting] = useState(false);
-  const [extractError, setExtractError] = useState<string>('');
-  const [extractionProgress, setExtractionProgress] = useState<{
-    batch: number;
-    totalBatches: number;
-    questionsExtracted: number;
-    status: string;
-  } | null>(null);
+  const [state, setState] = useState<QuizState>('ready');
+  const [hasQuestions, setHasQuestions] = useState<boolean | null>(null);
+  const [isCheckingQuestions, setIsCheckingQuestions] = useState(true);
   
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
   const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]); // Selected questions for the quiz (90 random)
@@ -36,7 +25,6 @@ const Quiz = () => {
   const [timeElapsed, setTimeElapsed] = useState(0);
   const [questionsPerPage, setQuestionsPerPage] = useState(10);
   
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Format time as MM:SS
@@ -45,6 +33,45 @@ const Quiz = () => {
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
+
+  // Check if questions exist on mount
+  React.useEffect(() => {
+    const checkQuestions = async () => {
+      if (!currentUser) {
+        setIsCheckingQuestions(false);
+        return;
+      }
+
+      try {
+        const token = await currentUser.getIdToken();
+        const result = await checkQuizQuestions(token);
+        setHasQuestions(result.hasQuestions);
+        
+        // If questions exist, load them
+        if (result.hasQuestions) {
+          const questionsData = await getQuizQuestionsFromApi(token);
+          if (questionsData.questions && questionsData.questions.length > 0) {
+            setQuestions(questionsData.questions);
+            setState('ready');
+          } else {
+            // No questions found
+            setState('ready'); // Will show "no questions" message
+          }
+        } else {
+          // No questions exist
+          setState('ready'); // Will show "no questions" message
+        }
+    } catch (error) {
+        console.error('Error checking questions:', error);
+        setHasQuestions(false);
+        setState('ready');
+      } finally {
+        setIsCheckingQuestions(false);
+      }
+    };
+
+    checkQuestions();
+  }, [currentUser]);
 
   // Start timer when quiz begins
   React.useEffect(() => {
@@ -61,85 +88,6 @@ const Quiz = () => {
     };
   }, [state, timeStarted]);
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setPdfFileName(file.name);
-    setIsParsingPdf(true);
-    setPdfPages([]);
-    setExtractError('');
-    setPdfParseProgress({ current: 0, total: 0 });
-
-    try {
-      const result = await extractContentFromPdf(file, (current, total) => {
-        setPdfParseProgress({ current, total });
-      });
-      
-      setPdfPages(result.pages);
-    } catch (error: any) {
-      console.error(error);
-      alert(error.message || "Failed to parse PDF.");
-      setPdfFileName('');
-    } finally {
-      setIsParsingPdf(false);
-      setPdfParseProgress({ current: 0, total: 0 });
-    }
-  };
-
-  const handleExtractQuestions = async () => {
-    if (pdfPages.length === 0) return;
-    
-    setIsExtracting(true);
-    setExtractError('');
-    setExtractionProgress(null);
-    
-    try {
-      // Get Firebase auth token
-      if (!currentUser) {
-        throw new Error('You must be logged in to extract questions');
-      }
-      
-      const token = await currentUser.getIdToken();
-      
-      const result = await extractQuestionsFromPdf(pdfPages, token, (progress) => {
-        if (progress.type === 'progress') {
-          setExtractionProgress({
-            batch: progress.batch || 0,
-            totalBatches: progress.totalBatches || 1,
-            questionsExtracted: progress.questionsExtracted || 0,
-            status: progress.status || 'Processing...'
-          });
-        }
-      });
-      
-      if (result.questions && result.questions.length > 0) {
-        setQuestions(result.questions);
-        setState('ready');
-        setExtractionProgress(null);
-      } else {
-        setExtractError('No questions found in the PDF. Please ensure the PDF contains questions and answers.');
-      }
-    } catch (error: any) {
-      console.error('Error extracting questions:', error);
-      
-      // Handle service unavailable/overloaded errors (503)
-      if (error.type === 'service_unavailable' || error.message?.includes('overloaded') || error.message?.includes('UNAVAILABLE')) {
-        const errorMsg = error.message || 'Gemini API is currently overloaded. Please try again in a few moments.';
-        setExtractError(errorMsg);
-      } 
-      // Handle quota errors with better formatting
-      else if (error.type === 'quota_exceeded' || error.message?.includes('quota')) {
-        const errorMsg = error.message || 'API quota exceeded';
-        setExtractError(errorMsg);
-      } else {
-        setExtractError(error.message || 'Failed to extract questions from PDF. Please try again.');
-      }
-    } finally {
-      setIsExtracting(false);
-      setExtractionProgress(null);
-    }
-  };
 
   const startQuiz = () => {
     // Randomly select 90 questions (or all if less than 90)
@@ -192,20 +140,13 @@ const Quiz = () => {
   };
 
   const resetQuiz = () => {
-    setState('upload');
-    setPdfFileName('');
-    setPdfPages([]);
-    setQuestions([]);
+    setState('ready');
     setQuizQuestions([]);
     setCurrentQuestionIndex(0);
     setAnswers({});
     setShowResults(false);
     setTimeStarted(null);
     setTimeElapsed(0);
-    setExtractError('');
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
   };
 
   // Use quizQuestions when taking quiz, otherwise use all questions
@@ -251,175 +192,52 @@ const Quiz = () => {
             <BookOpen className="text-blue-600" size={28} />
             Quiz Simulator
           </h2>
-          <p className="text-slate-500 mt-1">Upload a PDF with questions and take an exam-style quiz</p>
+          <p className="text-slate-500 mt-1">Take an exam-style quiz with randomly selected questions</p>
         </div>
 
-        {/* UPLOAD STATE */}
-        {state === 'upload' && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">Upload Quiz PDF</CardTitle>
-              <CardDescription>Upload a PDF containing questions and answers</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <div className="border-2 border-dashed border-slate-200 rounded-lg p-10 flex flex-col items-center justify-center text-center hover:bg-slate-50/50 transition-colors">
-                  {pdfFileName ? (
-                    <div className="w-full max-w-sm">
-                      <div className="flex items-center gap-3 p-3 bg-blue-50 border border-blue-100 rounded-lg">
-                        <div className="h-10 w-10 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                          <FileText className="text-blue-600" size={20} />
-                        </div>
-                        <div className="flex-1 min-w-0 text-left">
-                          <p className="text-sm font-medium text-blue-900 truncate">{pdfFileName}</p>
-                          <p className="text-xs text-blue-700">
-                            {isParsingPdf && pdfParseProgress.total > 0 
-                              ? `Processing page ${pdfParseProgress.current} of ${pdfParseProgress.total}...`
-                              : pdfPages.length > 0 
-                                ? `${pdfPages.length} pages ready` 
-                                : 'Processing...'}
-                          </p>
-                          {isParsingPdf && pdfParseProgress.total > 0 && (
-                            <div className="mt-1 w-full bg-blue-200 rounded-full h-1">
-                              <div 
-                                className="bg-blue-600 h-1 rounded-full transition-all duration-300" 
-                                style={{ width: `${(pdfParseProgress.current / pdfParseProgress.total) * 100}%` }}
-                              />
-                            </div>
-                          )}
-                        </div>
-                        <Button 
-                          variant="ghost" 
-                          size="icon" 
-                          onClick={() => {
-                            setPdfFileName('');
-                            setPdfPages([]);
-                            if (fileInputRef.current) fileInputRef.current.value = '';
-                          }} 
-                          className="h-8 w-8 text-blue-500 hover:text-blue-700 hover:bg-blue-100"
-                        >
-                          <X size={16} />
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="h-12 w-12 bg-slate-100 rounded-full flex items-center justify-center mb-4 text-slate-500">
-                        <Upload size={24} />
-                      </div>
-                      <h3 className="font-semibold text-slate-900">Click to upload PDF</h3>
-                      <Input 
-                        ref={fileInputRef}
-                        type="file" 
-                        accept=".pdf"
-                        onChange={handleFileChange}
-                        className="max-w-xs cursor-pointer mt-4"
-                      />
-                    </>
-                  )}
-                </div>
-
-                {extractError && (
-                  <Alert variant="destructive">
-                    <AlertCircle className="h-4 w-4" />
-                    <AlertTitle>
-                      {extractError.includes('quota') ? 'API Quota Exceeded' : 'Extraction Error'}
-                    </AlertTitle>
-                    <AlertDescription className="whitespace-pre-line">
-                      {extractError}
-                    </AlertDescription>
-                  </Alert>
-                )}
-              </div>
-            </CardContent>
-            <CardFooter className="flex flex-col gap-3">
-              {isExtracting && extractionProgress && (
-                <div className="w-full space-y-2">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-600">{extractionProgress.status}</span>
-                    <span className="text-slate-500">
-                      Batch {extractionProgress.batch} of {extractionProgress.totalBatches}
-                    </span>
-                  </div>
-                  <div className="w-full bg-slate-200 rounded-full h-2">
-                    <div 
-                      className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
-                      style={{ width: `${(extractionProgress.batch / extractionProgress.totalBatches) * 100}%` }}
-                    />
-                  </div>
-                  <div className="flex items-center justify-between text-xs text-slate-500">
-                    <span>{extractionProgress.questionsExtracted} questions extracted so far</span>
-                    <span>{Math.round((extractionProgress.batch / extractionProgress.totalBatches) * 100)}% complete</span>
-                  </div>
-                </div>
-              )}
-              <div className="flex justify-end w-full">
-                <Button 
-                  onClick={handleExtractQuestions} 
-                  disabled={pdfPages.length === 0 || isParsingPdf || isExtracting}
-                >
-                  {isExtracting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  {isExtracting ? 'Extracting Questions...' : 'Extract Questions'}
-                </Button>
-              </div>
-            </CardFooter>
-          </Card>
-        )}
-
-        {/* EXTRACTING STATE */}
-        {state === 'extracting' && (
+        {/* Loading state - checking for questions */}
+        {isCheckingQuestions && (
           <Card>
             <CardContent className="flex flex-col items-center justify-center py-12">
               <Loader2 className="h-12 w-12 animate-spin text-blue-600 mb-4" />
-              <p className="text-slate-600 font-medium">Extracting questions from PDF...</p>
-              <p className="text-sm text-slate-500 mt-2">This may take a moment</p>
+              <p className="text-slate-600 font-medium">Checking for available questions...</p>
             </CardContent>
           </Card>
         )}
 
-        {/* READY STATE */}
-        {state === 'ready' && (
+        {/* No questions available - show message */}
+        {!isCheckingQuestions && !hasQuestions && (
+          <Card>
+            <CardContent className="flex flex-col items-center justify-center py-12">
+              <AlertCircle className="h-16 w-16 text-slate-400 mb-4" />
+              <h3 className="text-xl font-semibold text-slate-900 mb-2">No Quiz Questions Available</h3>
+              <p className="text-slate-600 text-center max-w-md">
+                There are no quiz questions available yet. Please contact an administrator to upload quiz questions.
+              </p>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* READY STATE - Same for all users */}
+        {!isCheckingQuestions && hasQuestions && state === 'ready' && (
           <Card>
             <CardHeader>
               <CardTitle className="text-lg">Quiz Ready</CardTitle>
-              <CardDescription>Review the extracted questions before starting</CardDescription>
+              <CardDescription>Start the exam simulator</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
                 <div className="flex items-center gap-4 p-4 bg-green-50 border border-green-200 rounded-lg">
                   <CheckCircle2 className="text-green-600" size={24} />
-                  <div className="flex-1">
-                    <p className="font-medium text-green-900">Successfully extracted {questions.length} questions</p>
-                    <p className="text-sm text-green-700 mt-1">
-                      From {pdfPages.length} PDF pages • Quiz will randomly select {Math.min(90, questions.length)} questions
-                    </p>
-                    <div className="mt-2 flex gap-4 text-xs text-green-600">
-                      <span>Total Questions: <strong>{questions.length}</strong></span>
-                      <span>PDF Pages: <strong>{pdfPages.length}</strong></span>
-                      <span>Quiz Questions: <strong>{Math.min(90, questions.length)}</strong> (randomly selected)</span>
-                    </div>
+                  <div>
+                    <p className="font-medium text-green-900">Ready to start quiz</p>
+                    <p className="text-sm text-green-700">{questions.length} questions available</p>
+                    <p className="text-xs text-green-600 mt-1">Quiz will randomly select {Math.min(90, questions.length)} questions</p>
                   </div>
-                </div>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-96 overflow-y-auto">
-                  {questions.map((q, idx) => (
-                    <div key={q.id} className="p-3 border border-slate-200 rounded-lg text-sm">
-                      <div className="font-medium text-slate-700 mb-1">
-                        Q{q.id}: {q.question.substring(0, 60)}{q.question.length > 60 ? '...' : ''}
-                      </div>
-                      <div className="text-xs text-slate-500">
-                        Correct Answer: {q.correctAnswer}
-                      </div>
-                    </div>
-                  ))}
                 </div>
               </div>
             </CardContent>
-            <CardFooter className="flex justify-between">
-              <Button variant="outline" onClick={resetQuiz}>
-                <RotateCcw className="mr-2 h-4 w-4" />
-                Upload New PDF
-              </Button>
+            <CardFooter className="flex justify-end">
               <Button onClick={startQuiz}>
                 <Play className="mr-2 h-4 w-4" />
                 Start Quiz
@@ -695,35 +513,49 @@ const Quiz = () => {
                             {(['A', 'B', 'C', 'D'] as const).map((option) => {
                               const isUserAnswer = userAnswer === option;
                               const isCorrectAnswer = q.correctAnswer === option;
+                              const optionExplanation = q.optionExplanations?.[option];
                               
                               return (
                                 <div
                                   key={option}
                                   className={cn(
-                                    "p-3 rounded-lg border-2 flex items-start gap-3",
+                                    "p-3 rounded-lg border-2",
                                     isCorrectAnswer && "bg-green-100 border-green-300",
-                                    isUserAnswer && !isCorrectAnswer && "bg-red-100 border-red-300"
+                                    isUserAnswer && !isCorrectAnswer && "bg-red-100 border-red-300",
+                                    !isCorrectAnswer && !isUserAnswer && "bg-slate-50 border-slate-200"
                                   )}
                                 >
-                                  <div className={cn(
-                                    "flex-shrink-0 w-6 h-6 rounded-full border-2 flex items-center justify-center font-medium text-sm",
-                                    isCorrectAnswer ? "border-green-600 bg-green-600 text-white" : "border-slate-300"
-                                  )}>
-                                    {option}
+                                  <div className="flex items-start gap-3">
+                                    <div className={cn(
+                                      "flex-shrink-0 w-6 h-6 rounded-full border-2 flex items-center justify-center font-medium text-sm",
+                                      isCorrectAnswer ? "border-green-600 bg-green-600 text-white" : "border-slate-300"
+                                    )}>
+                                      {option}
+                                    </div>
+                                    <div className="flex-1">
+                                      <span className="text-slate-800 block mb-1">{q.options[option]}</span>
+                                      {optionExplanation && (
+                                        <p className={cn(
+                                          "text-xs mt-1 italic",
+                                          isCorrectAnswer ? "text-green-700" : "text-slate-600"
+                                        )}>
+                                          {isCorrectAnswer ? '✓ ' : '✗ '}{optionExplanation}
+                                        </p>
+                                      )}
+                                    </div>
+                                    {isCorrectAnswer && (
+                                      <CheckCircle2 className="text-green-600 flex-shrink-0" size={20} />
+                                    )}
+                                    {isUserAnswer && !isCorrectAnswer && (
+                                      <X className="text-red-600 flex-shrink-0" size={20} />
+                                    )}
                                   </div>
-                                  <span className="flex-1 text-slate-800">{q.options[option]}</span>
-                                  {isCorrectAnswer && (
-                                    <CheckCircle2 className="text-green-600 flex-shrink-0" size={20} />
-                                  )}
-                                  {isUserAnswer && !isCorrectAnswer && (
-                                    <X className="text-red-600 flex-shrink-0" size={20} />
-                                  )}
                                 </div>
                               );
                             })}
                           </div>
                           
-                          {q.explanation && (
+                          {q.explanation && !q.optionExplanations && (
                             <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                               <p className="text-sm font-medium text-blue-900 mb-1">Explanation:</p>
                               <p className="text-sm text-blue-800">{q.explanation}</p>
