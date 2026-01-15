@@ -20,13 +20,21 @@ const Quiz = () => {
   const [pdfParseProgress, setPdfParseProgress] = useState({ current: 0, total: 0 });
   const [isExtracting, setIsExtracting] = useState(false);
   const [extractError, setExtractError] = useState<string>('');
+  const [extractionProgress, setExtractionProgress] = useState<{
+    batch: number;
+    totalBatches: number;
+    questionsExtracted: number;
+    status: string;
+  } | null>(null);
   
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
+  const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]); // Selected questions for the quiz (90 random)
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<number, 'A' | 'B' | 'C' | 'D' | null>>({});
   const [showResults, setShowResults] = useState(false);
   const [timeStarted, setTimeStarted] = useState<number | null>(null);
   const [timeElapsed, setTimeElapsed] = useState(0);
+  const [questionsPerPage, setQuestionsPerPage] = useState(10);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -84,6 +92,7 @@ const Quiz = () => {
     
     setIsExtracting(true);
     setExtractError('');
+    setExtractionProgress(null);
     
     try {
       // Get Firebase auth token
@@ -93,19 +102,34 @@ const Quiz = () => {
       
       const token = await currentUser.getIdToken();
       
-      const result = await extractQuestionsFromPdf(pdfPages, token);
+      const result = await extractQuestionsFromPdf(pdfPages, token, (progress) => {
+        if (progress.type === 'progress') {
+          setExtractionProgress({
+            batch: progress.batch || 0,
+            totalBatches: progress.totalBatches || 1,
+            questionsExtracted: progress.questionsExtracted || 0,
+            status: progress.status || 'Processing...'
+          });
+        }
+      });
       
       if (result.questions && result.questions.length > 0) {
         setQuestions(result.questions);
         setState('ready');
+        setExtractionProgress(null);
       } else {
         setExtractError('No questions found in the PDF. Please ensure the PDF contains questions and answers.');
       }
     } catch (error: any) {
       console.error('Error extracting questions:', error);
       
+      // Handle service unavailable/overloaded errors (503)
+      if (error.type === 'service_unavailable' || error.message?.includes('overloaded') || error.message?.includes('UNAVAILABLE')) {
+        const errorMsg = error.message || 'Gemini API is currently overloaded. Please try again in a few moments.';
+        setExtractError(errorMsg);
+      } 
       // Handle quota errors with better formatting
-      if (error.type === 'quota_exceeded' || error.message?.includes('quota')) {
+      else if (error.type === 'quota_exceeded' || error.message?.includes('quota')) {
         const errorMsg = error.message || 'API quota exceeded';
         setExtractError(errorMsg);
       } else {
@@ -113,10 +137,30 @@ const Quiz = () => {
       }
     } finally {
       setIsExtracting(false);
+      setExtractionProgress(null);
     }
   };
 
   const startQuiz = () => {
+    // Randomly select 90 questions (or all if less than 90)
+    const QUIZ_QUESTION_COUNT = 90;
+    let selectedQuestions: QuizQuestion[] = [];
+    
+    if (questions.length <= QUIZ_QUESTION_COUNT) {
+      // If we have 90 or fewer questions, use all of them
+      selectedQuestions = [...questions];
+    } else {
+      // Randomly select 90 questions
+      const shuffled = [...questions].sort(() => Math.random() - 0.5);
+      selectedQuestions = shuffled.slice(0, QUIZ_QUESTION_COUNT);
+      // Re-number the questions to be sequential (1, 2, 3, ...)
+      selectedQuestions = selectedQuestions.map((q, idx) => ({
+        ...q,
+        id: idx + 1
+      }));
+    }
+    
+    setQuizQuestions(selectedQuestions);
     setState('taking');
     setCurrentQuestionIndex(0);
     setAnswers({});
@@ -133,7 +177,8 @@ const Quiz = () => {
   };
 
   const goToQuestion = (index: number) => {
-    if (index >= 0 && index < questions.length) {
+    const maxIndex = activeQuestions.length - 1;
+    if (index >= 0 && index <= maxIndex) {
       setCurrentQuestionIndex(index);
     }
   };
@@ -151,6 +196,7 @@ const Quiz = () => {
     setPdfFileName('');
     setPdfPages([]);
     setQuestions([]);
+    setQuizQuestions([]);
     setCurrentQuestionIndex(0);
     setAnswers({});
     setShowResults(false);
@@ -162,10 +208,39 @@ const Quiz = () => {
     }
   };
 
-  const currentQuestion = questions[currentQuestionIndex];
+  // Use quizQuestions when taking quiz, otherwise use all questions
+  const activeQuestions = state === 'taking' || state === 'review' ? quizQuestions : questions;
+  
+  const currentQuestion = activeQuestions[currentQuestionIndex];
   const answeredCount = Object.keys(answers).length;
-  const correctCount = questions.filter((q, idx) => answers[idx] === q.correctAnswer).length;
-  const score = questions.length > 0 ? Math.round((correctCount / questions.length) * 100) : 0;
+  const correctCount = activeQuestions.filter((q, idx) => answers[idx] === q.correctAnswer).length;
+  const score = activeQuestions.length > 0 ? Math.round((correctCount / activeQuestions.length) * 100) : 0;
+  
+  // Pagination calculations
+  const totalPages = Math.ceil(activeQuestions.length / questionsPerPage);
+  const currentPage = Math.floor(currentQuestionIndex / questionsPerPage) + 1;
+  const startQuestionIndex = (currentPage - 1) * questionsPerPage;
+  const endQuestionIndex = Math.min(startQuestionIndex + questionsPerPage, activeQuestions.length);
+  const questionsOnCurrentPage = activeQuestions.slice(startQuestionIndex, endQuestionIndex);
+  
+  // Navigation helpers
+  const goToPage = (page: number) => {
+    const targetPage = Math.max(1, Math.min(page, totalPages));
+    const targetIndex = (targetPage - 1) * questionsPerPage;
+    goToQuestion(targetIndex);
+  };
+  
+  const goToNextPage = () => {
+    if (currentPage < totalPages) {
+      goToPage(currentPage + 1);
+    }
+  };
+  
+  const goToPrevPage = () => {
+    if (currentPage > 1) {
+      goToPage(currentPage - 1);
+    }
+  };
 
   return (
     <div className="flex-1 overflow-y-auto p-8 bg-slate-50">
@@ -257,14 +332,36 @@ const Quiz = () => {
                 )}
               </div>
             </CardContent>
-            <CardFooter className="flex justify-end gap-3">
-              <Button 
-                onClick={handleExtractQuestions} 
-                disabled={pdfPages.length === 0 || isParsingPdf || isExtracting}
-              >
-                {isExtracting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {isExtracting ? 'Extracting Questions...' : 'Extract Questions'}
-              </Button>
+            <CardFooter className="flex flex-col gap-3">
+              {isExtracting && extractionProgress && (
+                <div className="w-full space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-slate-600">{extractionProgress.status}</span>
+                    <span className="text-slate-500">
+                      Batch {extractionProgress.batch} of {extractionProgress.totalBatches}
+                    </span>
+                  </div>
+                  <div className="w-full bg-slate-200 rounded-full h-2">
+                    <div 
+                      className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
+                      style={{ width: `${(extractionProgress.batch / extractionProgress.totalBatches) * 100}%` }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-slate-500">
+                    <span>{extractionProgress.questionsExtracted} questions extracted so far</span>
+                    <span>{Math.round((extractionProgress.batch / extractionProgress.totalBatches) * 100)}% complete</span>
+                  </div>
+                </div>
+              )}
+              <div className="flex justify-end w-full">
+                <Button 
+                  onClick={handleExtractQuestions} 
+                  disabled={pdfPages.length === 0 || isParsingPdf || isExtracting}
+                >
+                  {isExtracting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {isExtracting ? 'Extracting Questions...' : 'Extract Questions'}
+                </Button>
+              </div>
             </CardFooter>
           </Card>
         )}
@@ -291,9 +388,16 @@ const Quiz = () => {
               <div className="space-y-4">
                 <div className="flex items-center gap-4 p-4 bg-green-50 border border-green-200 rounded-lg">
                   <CheckCircle2 className="text-green-600" size={24} />
-                  <div>
+                  <div className="flex-1">
                     <p className="font-medium text-green-900">Successfully extracted {questions.length} questions</p>
-                    <p className="text-sm text-green-700">Click "Start Quiz" to begin the exam simulator</p>
+                    <p className="text-sm text-green-700 mt-1">
+                      From {pdfPages.length} PDF pages • Quiz will randomly select {Math.min(90, questions.length)} questions
+                    </p>
+                    <div className="mt-2 flex gap-4 text-xs text-green-600">
+                      <span>Total Questions: <strong>{questions.length}</strong></span>
+                      <span>PDF Pages: <strong>{pdfPages.length}</strong></span>
+                      <span>Quiz Questions: <strong>{Math.min(90, questions.length)}</strong> (randomly selected)</span>
+                    </div>
                   </div>
                 </div>
                 
@@ -330,10 +434,13 @@ const Quiz = () => {
             {/* Progress Bar */}
             <Card>
               <CardContent className="pt-6">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-4">
+                <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+                  <div className="flex items-center gap-4 flex-wrap">
                     <Badge variant="outline" className="text-sm">
-                      Question {currentQuestionIndex + 1} of {questions.length}
+                      Question {currentQuestionIndex + 1} of {activeQuestions.length}
+                    </Badge>
+                    <Badge variant="outline" className="text-sm">
+                      Page {currentPage} of {totalPages}
                     </Badge>
                     <Badge variant="outline" className="text-sm">
                       <Clock className="mr-1 h-3 w-3" />
@@ -342,17 +449,108 @@ const Quiz = () => {
                     <Badge variant="outline" className="text-sm">
                       {answeredCount} answered
                     </Badge>
+                    <Badge variant="outline" className="text-sm">
+                      {activeQuestions.length} questions • {questions.length} total available
+                    </Badge>
                   </div>
                   <Button variant="outline" size="sm" onClick={finishQuiz}>
                     Finish Quiz
                   </Button>
                 </div>
-                <div className="w-full bg-slate-200 rounded-full h-2">
+                <div className="w-full bg-slate-200 rounded-full h-2 mb-4">
                   <div 
                     className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
-                    style={{ width: `${((currentQuestionIndex + 1) / questions.length) * 100}%` }}
+                    style={{ width: `${((currentQuestionIndex + 1) / activeQuestions.length) * 100}%` }}
                   />
                 </div>
+                
+                {/* Page Navigation */}
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-between gap-2 pt-4 border-t">
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={goToPrevPage}
+                        disabled={currentPage === 1}
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                        Prev Page
+                      </Button>
+                      
+                      <div className="flex items-center gap-1">
+                        {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                          let pageNum;
+                          if (totalPages <= 5) {
+                            pageNum = i + 1;
+                          } else if (currentPage <= 3) {
+                            pageNum = i + 1;
+                          } else if (currentPage >= totalPages - 2) {
+                            pageNum = totalPages - 4 + i;
+                          } else {
+                            pageNum = currentPage - 2 + i;
+                          }
+                          
+                          return (
+                            <button
+                              key={pageNum}
+                              onClick={() => goToPage(pageNum)}
+                              className={cn(
+                                "w-8 h-8 rounded text-sm font-medium transition-all",
+                                pageNum === currentPage
+                                  ? "bg-blue-600 text-white"
+                                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                              )}
+                            >
+                              {pageNum}
+                            </button>
+                          );
+                        })}
+                        {totalPages > 5 && currentPage < totalPages - 2 && (
+                          <>
+                            <span className="px-2 text-slate-500">...</span>
+                            <button
+                              onClick={() => goToPage(totalPages)}
+                              className="w-8 h-8 rounded text-sm font-medium bg-slate-100 text-slate-600 hover:bg-slate-200"
+                            >
+                              {totalPages}
+                            </button>
+                          </>
+                        )}
+                      </div>
+                      
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={goToNextPage}
+                        disabled={currentPage === totalPages}
+                      >
+                        Next Page
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    
+                    <div className="flex items-center gap-2 text-sm text-slate-600">
+                      <span>Questions per page:</span>
+                      <select
+                        value={questionsPerPage}
+                        onChange={(e) => {
+                          const newPerPage = parseInt(e.target.value);
+                          setQuestionsPerPage(newPerPage);
+                          // Adjust current question index to stay on same question if possible
+                          const newPage = Math.floor(currentQuestionIndex / newPerPage) + 1;
+                          goToPage(newPage);
+                        }}
+                        className="px-2 py-1 border border-slate-300 rounded text-sm"
+                      >
+                        <option value="5">5</option>
+                        <option value="10">10</option>
+                        <option value="20">20</option>
+                        <option value="50">50</option>
+                      </select>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
 
@@ -405,29 +603,35 @@ const Quiz = () => {
                   Previous
                 </Button>
                 
-                <div className="flex gap-2">
-                  {questions.map((_, idx) => (
-                    <button
-                      key={idx}
-                      onClick={() => goToQuestion(idx)}
-                      className={cn(
-                        "w-8 h-8 rounded text-sm font-medium transition-all",
-                        idx === currentQuestionIndex
-                          ? "bg-blue-600 text-white"
-                          : answers[idx]
-                            ? "bg-green-100 text-green-700 border border-green-300"
-                            : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                      )}
-                    >
-                      {idx + 1}
-                    </button>
-                  ))}
+                {/* Question navigation for current page */}
+                <div className="flex gap-1 flex-wrap justify-center max-w-2xl">
+                  {questionsOnCurrentPage.map((_, idx) => {
+                    const questionIdx = startQuestionIndex + idx;
+                    const isAnswered = answers[questionIdx] !== undefined;
+                    return (
+                      <button
+                        key={questionIdx}
+                        onClick={() => goToQuestion(questionIdx)}
+                        className={cn(
+                          "w-8 h-8 rounded text-sm font-medium transition-all",
+                          questionIdx === currentQuestionIndex
+                            ? "bg-blue-600 text-white ring-2 ring-blue-300"
+                            : isAnswered
+                              ? "bg-green-100 text-green-700 border border-green-300 hover:bg-green-200"
+                              : "bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-300"
+                        )}
+                        title={`Question ${questionIdx + 1}${isAnswered ? ' (answered)' : ''}`}
+                      >
+                        {questionIdx + 1}
+                      </button>
+                    );
+                  })}
                 </div>
                 
                 <Button
                   variant="outline"
                   onClick={() => goToQuestion(currentQuestionIndex + 1)}
-                  disabled={currentQuestionIndex === questions.length - 1}
+                  disabled={currentQuestionIndex === activeQuestions.length - 1}
                 >
                   Next
                   <ChevronRight className="ml-2 h-4 w-4" />
@@ -458,13 +662,13 @@ const Quiz = () => {
                     <div className="text-sm text-green-700 mt-1">Correct</div>
                   </div>
                   <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-center">
-                    <div className="text-3xl font-bold text-red-600">{questions.length - correctCount}</div>
+                    <div className="text-3xl font-bold text-red-600">{activeQuestions.length - correctCount}</div>
                     <div className="text-sm text-red-700 mt-1">Incorrect</div>
                   </div>
                 </div>
                 
                 <div className="space-y-4">
-                  {questions.map((q, idx) => {
+                  {activeQuestions.map((q, idx) => {
                     const userAnswer = answers[idx];
                     const isCorrect = userAnswer === q.correctAnswer;
                     
