@@ -161,8 +161,8 @@ router.post('/extract-questions', verifyToken, requireAuth, async (req, res) => 
     }
 
     // Process pages in batches to avoid token limits and JSON truncation
-    // Large PDFs (300+ pages) can cause JSON responses to be truncated
-    const BATCH_SIZE = 50; // Process 50 pages at a time
+    // Increased batch size for faster processing (fewer API calls)
+    const BATCH_SIZE = 100; // Process 100 pages at a time (increased from 50)
     const textPages = pages.filter(p => p.type === 'text');
     const imagePages = pages.filter(p => p.type === 'image');
     
@@ -171,13 +171,12 @@ router.post('/extract-questions', verifyToken, requireAuth, async (req, res) => 
       return res.status(400).json({ error: 'No extractable content found in PDF pages' });
     }
 
-    // Process batches in parallel for faster extraction
-    // Use concurrency limit to avoid overwhelming the API
-    const CONCURRENT_BATCHES = 3; // Process 3 batches at a time
+    // Process ALL batches in parallel for maximum speed
+    // No concurrency limit - process everything at once
     const allQuestions = [];
     const totalBatches = Math.ceil(textPages.length / BATCH_SIZE);
     
-    console.log(`[Quiz] Processing ${textPages.length} text pages in ${totalBatches} batch(es) (${CONCURRENT_BATCHES} concurrent)`);
+    console.log(`[Quiz] Processing ${textPages.length} text pages in ${totalBatches} batch(es) (all parallel)`);
     
     // Helper function to process a single batch
     const processBatch = async (batchIndex, startQuestionId) => {
@@ -314,50 +313,41 @@ ${textContent}`;
       batch: 0,
       totalBatches,
       questionsExtracted: 0,
-      status: 'Starting extraction...'
+      status: 'Starting extraction... Processing all batches in parallel'
     }) + '\n');
     
-    // Process batches with concurrency limit
+    // Process ALL batches in parallel for maximum speed
     const batchPromises = [];
-    let nextQuestionId = 1;
-    let completedBatches = 0;
     
     for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
-      const startQuestionId = nextQuestionId;
-      // Estimate next question ID (we'll adjust after processing)
-      // Assume ~5-10 questions per batch on average
-      nextQuestionId += 8; // Conservative estimate
+      // Use batch index * 100 as starting ID (will be renumbered later)
+      batchPromises.push(processBatch(batchIndex, batchIndex * 100 + 1));
+    }
+    
+    // Wait for all batches to complete
+    const results = await Promise.all(batchPromises);
+    
+    // Sort results by batch index to maintain order
+    results.sort((a, b) => a.batchIndex - b.batchIndex);
+    
+    // Process results and send progress updates
+    let completedBatches = 0;
+    for (const result of results) {
+      const renumberedQuestions = result.questions.map((q, idx) => ({
+        ...q,
+        id: allQuestions.length + idx + 1
+      }));
+      allQuestions.push(...renumberedQuestions);
+      completedBatches++;
       
-      batchPromises.push(processBatch(batchIndex, startQuestionId));
-      
-      // Process in chunks of CONCURRENT_BATCHES
-      if (batchPromises.length >= CONCURRENT_BATCHES || batchIndex === totalBatches - 1) {
-        const results = await Promise.all(batchPromises);
-        
-        // Sort results by batch index to maintain order
-        results.sort((a, b) => a.batchIndex - b.batchIndex);
-        
-        // Add questions in order and renumber them sequentially
-        for (const result of results) {
-          const renumberedQuestions = result.questions.map((q, idx) => ({
-            ...q,
-            id: allQuestions.length + idx + 1
-          }));
-          allQuestions.push(...renumberedQuestions);
-          completedBatches++;
-          
-          // Send progress update
-          res.write(JSON.stringify({
-            type: 'progress',
-            batch: completedBatches,
-            totalBatches,
-            questionsExtracted: allQuestions.length,
-            status: `Processed batch ${result.batchIndex + 1}/${totalBatches} (${result.questions.length} questions)`
-          }) + '\n');
-        }
-        
-        batchPromises.length = 0; // Clear the array
-      }
+      // Send progress update as each batch completes
+      res.write(JSON.stringify({
+        type: 'progress',
+        batch: completedBatches,
+        totalBatches,
+        questionsExtracted: allQuestions.length,
+        status: `Processed batch ${result.batchIndex + 1}/${totalBatches} (${result.questions.length} questions)`
+      }) + '\n');
     }
 
     // If no questions were extracted, return error
