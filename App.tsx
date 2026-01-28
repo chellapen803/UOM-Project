@@ -280,6 +280,9 @@ const App = () => {
 
   // 2. UPLOAD & PROCESS
   const handleUpload = async () => {
+    const perfStart = performance.now();
+    console.log(`[PERF] 🚀 Starting ingestion at ${new Date().toISOString()}`);
+    
     if (!uploadText && pdfPages.length === 0) return;
     setIsProcessing(true);
     setProcessingStatus('Initializing ingestion...');
@@ -294,20 +297,37 @@ const App = () => {
 
     // --- STRATEGY A: PDF (HYBRID) ---
     if (uploadMode === 'pdf' && pdfPages.length > 0) {
+        const chunkStart = performance.now();
+        console.log(`[PERF] 📄 Preparing ${pdfPages.length} PDF pages for chunking...`);
+        
         chunks = pdfPages.map(p => ({
             id: Math.random().toString(36),
             text: p.type === 'text' ? p.content : `[Image Page ${p.pageNumber}]`,
             sourceDoc: newDocId
         }));
+        
+        const chunkTime = performance.now() - chunkStart;
+        console.log(`[PERF] ✅ Chunking complete: ${chunks.length} chunks in ${chunkTime.toFixed(2)}ms`);
 
         // Total steps: 1 (NLP extraction) + 2 (graph save + doc save)
         setIngestProgress({ current: 0, total: 3, phase: 'Preparing PDF content' });
         setProcessingStatus(`Processing ${pdfPages.length} pages using NLP extraction...`);
         
-        // Extract graph from all pages at once (NLP is fast, no need for batching)
-        const extracted = extractGraphFromMixedContent(pdfPages);
+        // Extract graph from all pages using async chunked processing
+        const extractStart = performance.now();
+        console.log(`[PERF] 🔍 Starting ASYNC chunked NLP extraction on ${pdfPages.length} pages (${chunks.length} chunks)...`);
+        
+        setProcessingStatus(`Extracting entities from PDF (processing in chunks to keep UI responsive)...`);
+        
+        const extracted = await extractGraphFromMixedContent(pdfPages);
+        const extractTime = performance.now() - extractStart;
+        
         newNodes = [...newNodes, ...extracted.nodes];
         newLinks = [...newLinks, ...extracted.links];
+        
+        console.log(`[PERF] ✅ NLP extraction complete: ${extracted.nodes.length} nodes, ${extracted.links.length} links in ${extractTime.toFixed(2)}ms`);
+        console.log(`[PERF] ✅ Chunked processing kept UI responsive!`);
+        
         setIngestProgress({ current: 1, total: 3, phase: 'Entities extracted from PDF' });
 
     } 
@@ -340,14 +360,26 @@ const App = () => {
       const docTimeout = 300000 + Math.max(0, (chunks.length - 100) * 50);
       
       // Save graph data to Neo4j
+      const graphSaveStart = performance.now();
+      console.log(`[PERF] 💾 Starting graph save: ${newNodes.length} nodes, ${newLinks.length} links`);
+      
       setIngestProgress(prev => ({
         current: Math.max(prev.current, prev.total > 0 ? prev.total - 2 : 0),
         total: prev.total || (chunks.length > 0 ? chunks.length + 2 : 3),
         phase: 'Saving graph structure to Neo4j'
       }));
+      
+      // Yield before network call
+      await new Promise(resolve => setTimeout(resolve, 0));
+      
       await saveGraphToNeo4j(newNodes, newLinks, graphTimeout);
+      const graphSaveTime = performance.now() - graphSaveStart;
+      console.log(`[PERF] ✅ Graph save complete in ${graphSaveTime.toFixed(2)}ms`);
       
       // Save document and chunks to Neo4j
+      const docSaveStart = performance.now();
+      console.log(`[PERF] 💾 Starting document save: ${chunks.length} chunks`);
+      
       const entityIds = newNodes.map(n => n.id);
       setProcessingStatus(`Saving document chunks (${chunks.length} total)...`);
       setIngestProgress(prev => ({
@@ -356,7 +388,12 @@ const App = () => {
         phase: 'Saving document and chunks to Neo4j'
       }));
       
+      // Yield before network call
+      await new Promise(resolve => setTimeout(resolve, 0));
+      
       await saveDocumentToNeo4j(newDocId, docName, chunks, entityIds, docTimeout);
+      const docSaveTime = performance.now() - docSaveStart;
+      console.log(`[PERF] ✅ Document save complete in ${docSaveTime.toFixed(2)}ms`);
       
       // Update local documents state immediately (data is saved)
       const newDoc: IngestedDocument = {
@@ -383,11 +420,24 @@ const App = () => {
       }
       
       // Reload graph from Neo4j after saving to ensure UI matches database
+      const reloadStart = performance.now();
+      console.log(`[PERF] 🔄 Starting graph reload from Neo4j...`);
+      
       setProcessingStatus('Reloading graph from database...');
+      
+      // Yield before network call
+      await new Promise(resolve => setTimeout(resolve, 0));
+      
       try {
         const updatedGraph = await loadGraphFromNeo4j();
+        const reloadTime = performance.now() - reloadStart;
+        console.log(`[PERF] ✅ Graph reload complete: ${updatedGraph.nodes.length} nodes, ${updatedGraph.links.length} links in ${reloadTime.toFixed(2)}ms`);
+        
         setGraphData(updatedGraph);
       } catch (error) {
+        const reloadTime = performance.now() - reloadStart;
+        console.warn(`[PERF] ⚠️ Graph reload failed after ${reloadTime.toFixed(2)}ms, using fallback`);
+        
         // Fallback: update with extracted data if reload fails
         setGraphData(prev => {
           const allNodes = [...prev.nodes, ...newNodes];
@@ -404,7 +454,13 @@ const App = () => {
         setProcessingStatus('');
       }
       
+      const totalTime = performance.now() - perfStart;
+      console.log(`[PERF] 🎉 Ingestion complete in ${totalTime.toFixed(2)}ms (${(totalTime / 1000).toFixed(2)}s)`);
+      console.log(`[PERF] 📊 Summary: ${chunks.length} chunks, ${newNodes.length} nodes, ${newLinks.length} links`);
+      
     } catch (error: any) {
+      const totalTime = performance.now() - perfStart;
+      console.error(`[PERF] ❌ Ingestion failed after ${totalTime.toFixed(2)}ms:`, error);
       console.error('[App] Error saving to Neo4j:', error);
       setIsProcessing(false);
       setProcessingStatus('');

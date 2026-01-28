@@ -43,13 +43,50 @@ function scoreChunkRelevance(chunk, query, keywords) {
   const chunkStart = chunkTrimmed.toLowerCase();
   let score = 0;
   
-  // Extract main topic word (first significant word from query)
-  const mainTopic = keywords.length > 0 ? keywords[0].toLowerCase() : queryLower.split(/\s+/).find(w => w.length > 2) || '';
+  // Extract core topic phrase (remove helper words) - for multi-word topics like "rule-based access control"
+  const helperWords = new Set(['explain', 'describe', 'define', 'what', 'is', 'are', 'tell', 'me', 'about']);
+  const queryWords = queryLower.split(/\s+/).filter(w => w.length > 1);
+  const corePhrase = queryWords.filter(w => !helperWords.has(w)).join(' ');
+  const corePhraseHyphenated = corePhrase.replace(/\s+/g, '-');
+  const corePhraseSpaced = corePhraseHyphenated.replace(/-/g, ' ');
+  
+  // Extract main topic word (first significant non-helper word from query)
+  const mainTopic = (
+    keywords.find(w => !helperWords.has(w.toLowerCase())) ||
+    queryLower.split(/\s+/).find(w => w.length > 2 && !helperWords.has(w.toLowerCase())) ||
+    ''
+  ).toLowerCase();
+  
+  // HIGHEST PRIORITY: Core phrase match (e.g., "rule-based access control")
+  if (corePhrase && corePhrase.length > 5) {
+    // Exact core phrase match
+    if (chunkLower.includes(corePhrase)) {
+      score += 300; // Maximum priority
+      // Extra bonus if at start
+      if (chunkLower.indexOf(corePhrase) < 100) {
+        score += 150;
+      }
+    }
+    // Hyphenated version (e.g., "rule-based-access-control")
+    if (chunkLower.includes(corePhraseHyphenated)) {
+      score += 280;
+      if (chunkLower.indexOf(corePhraseHyphenated) < 100) {
+        score += 140;
+      }
+    }
+    // Spaced version variations
+    if (corePhraseSpaced !== corePhrase && chunkLower.includes(corePhraseSpaced)) {
+      score += 280;
+      if (chunkLower.indexOf(corePhraseSpaced) < 100) {
+        score += 140;
+      }
+    }
+  }
   
   // HUGE bonus if chunk starts with the main topic (definition/explanation pattern)
   // Like "MD5 was released..." or "Pretexting is..."
   if (mainTopic && chunkStart.startsWith(mainTopic)) {
-    score += 200; // Maximum priority for definition-style chunks
+    score += 200; // High priority for definition-style chunks
     
     // Extra bonus if followed by definition words
     const afterTopic = chunkLower.substring(mainTopic.length, mainTopic.length + 50);
@@ -182,13 +219,21 @@ export async function retrieveContext(query) {
     const queryLower = query.toLowerCase();
     const keywords = extractKeywords(query);
     
+    // Extract core topic phrase (remove helper words) - for multi-word topics like "rule-based access control"
+    // Define these at the top level so they're available for debug logging
+    const helperWords = new Set(['explain', 'describe', 'define', 'what', 'is', 'are', 'tell', 'me', 'about']);
+    const queryWords = queryLower.split(/\s+/).filter(w => w.length > 1);
+    const corePhrase = queryWords.filter(w => !helperWords.has(w)).join(' ');
+    const corePhraseHyphenated = corePhrase ? corePhrase.replace(/\s+/g, '-') : '';
+    const corePhraseSpaced = corePhraseHyphenated ? corePhraseHyphenated.replace(/-/g, ' ') : '';
+    
     // Map to store chunks with their scores
     const chunkScores = new Map();
     
     // Strategy 1: Exact entity match (highest priority)
     // Also prioritize chunks that START with the entity name (definition pattern)
     if (keywords.length > 0) {
-      const mainKeyword = keywords[0].toLowerCase();
+      const mainKeyword = (keywords.find(w => !helperWords.has(w.toLowerCase())) || keywords[0]).toLowerCase();
       
       // First, try to find chunks that start with the main keyword (definitions)
       const definitionChunksResult = await session.run(
@@ -254,7 +299,115 @@ export async function retrieveContext(query) {
       }
     }
     
-    // Strategy 3: Full query match in chunks (high priority)
+    // Strategy 3: Core topic phrase match (highest priority for multi-word topics)
+    // This is CRITICAL - we need to find chunks that actually contain the full phrase
+    if (corePhrase && corePhrase.length > 5) {
+      // Try exact phrase match (highest priority) - use word boundaries for better matching
+      const exactPhraseResult = await session.run(
+        `MATCH (chunk:Chunk)
+         WHERE toLower(chunk.text) CONTAINS $phrase
+         RETURN DISTINCT chunk.text as text
+         LIMIT 20`,
+        { phrase: corePhrase }
+      );
+      
+      exactPhraseResult.records.forEach(r => {
+        const text = r.get('text');
+        if (text) {
+          const textLower = text.toLowerCase();
+          // Verify it's actually the phrase, not just words scattered
+          const phraseIndex = textLower.indexOf(corePhrase.toLowerCase());
+          if (phraseIndex !== -1) {
+            chunkScores.set(text, 400); // VERY high score for exact phrase match
+          }
+        }
+      });
+      
+      // Also try hyphenated version (e.g., "rule-based-access-control")
+      if (corePhraseHyphenated && corePhraseHyphenated !== corePhrase) {
+        const hyphenatedResult = await session.run(
+          `MATCH (chunk:Chunk)
+           WHERE toLower(chunk.text) CONTAINS $phrase
+           RETURN DISTINCT chunk.text as text
+           LIMIT 20`,
+          { phrase: corePhraseHyphenated }
+        );
+        
+        hyphenatedResult.records.forEach(r => {
+          const text = r.get('text');
+          if (text) {
+            const textLower = text.toLowerCase();
+            const phraseIndex = textLower.indexOf(corePhraseHyphenated.toLowerCase());
+            if (phraseIndex !== -1) {
+              const existingScore = chunkScores.get(text) || 0;
+              chunkScores.set(text, Math.max(existingScore, 380)); // High score for hyphenated version
+            }
+          }
+        });
+      }
+      
+      // Try partial hyphenation (e.g., "rule-based access control")
+      const words = corePhrase.split(/\s+/);
+      if (words.length >= 3) {
+        // Try "rule-based access control" format
+        const partialHyphenated = `${words[0]}-${words[1]} ${words.slice(2).join(' ')}`;
+        const partialHyphenatedResult = await session.run(
+          `MATCH (chunk:Chunk)
+           WHERE toLower(chunk.text) CONTAINS $phrase
+           RETURN DISTINCT chunk.text as text
+           LIMIT 20`,
+          { phrase: partialHyphenated }
+        );
+        
+        partialHyphenatedResult.records.forEach(r => {
+          const text = r.get('text');
+          if (text) {
+            const textLower = text.toLowerCase();
+            const phraseIndex = textLower.indexOf(partialHyphenated.toLowerCase());
+            if (phraseIndex !== -1) {
+              const existingScore = chunkScores.get(text) || 0;
+              chunkScores.set(text, Math.max(existingScore, 380));
+            }
+          }
+        });
+      }
+      
+      // Try acronym search (e.g., "RuBAC" for "rule-based access control")
+      // Common pattern: "Rule-Based Access Control (RuBAC)" or "RuBAC (Rule-Based Access Control)"
+      const acronymPatterns = [
+        corePhrase.split(/\s+/).map(w => w[0]).join('').toUpperCase(), // RBAC
+        corePhrase.split(/\s+/).map(w => w[0]).join('').toLowerCase(), // rbac
+      ];
+      
+      for (const acronym of acronymPatterns) {
+        if (acronym.length >= 3) {
+          const acronymResult = await session.run(
+            `MATCH (chunk:Chunk)
+             WHERE toLower(chunk.text) CONTAINS $acronym
+             RETURN DISTINCT chunk.text as text
+             LIMIT 10`,
+            { acronym: acronym.toLowerCase() }
+          );
+          
+          acronymResult.records.forEach(r => {
+            const text = r.get('text');
+            if (text) {
+              const textLower = text.toLowerCase();
+              // Check if acronym appears near the core phrase words
+              const hasRule = textLower.includes('rule');
+              const hasAccess = textLower.includes('access');
+              const hasControl = textLower.includes('control');
+              if (hasRule && hasAccess && hasControl) {
+                const existingScore = chunkScores.get(text) || 0;
+                chunkScores.set(text, Math.max(existingScore, 350)); // High score for acronym + related words
+              }
+            }
+          });
+        }
+      }
+    }
+    
+    // Strategy 4: Full query match in chunks (medium-high priority)
     const fullQueryChunkResult = await session.run(
       `MATCH (chunk:Chunk)
        WHERE toLower(chunk.text) CONTAINS $query
@@ -271,7 +424,7 @@ export async function retrieveContext(query) {
       }
     });
     
-    // Strategy 4: Keyword matches in chunks (lower priority, but still useful)
+    // Strategy 5: Keyword matches in chunks (lower priority, but still useful)
     if (keywords.length > 0 && chunkScores.size < 10) {
       for (const keyword of keywords) {
         // Only search if we don't have enough good results
@@ -300,7 +453,12 @@ export async function retrieveContext(query) {
       const totalScore = baseScore + relevanceScore;
       
       // Check if this is a definition chunk (starts with main topic)
-      const mainTopic = keywords.length > 0 ? keywords[0].toLowerCase() : query.toLowerCase().split(/\s+/).find(w => w.length > 2) || '';
+      const helperWords = new Set(['explain', 'describe', 'define', 'what', 'is', 'are']);
+      const mainTopic = (
+        keywords.find(w => !helperWords.has(w.toLowerCase())) ||
+        query.toLowerCase().split(/\s+/).find(w => w.length > 2 && !helperWords.has(w.toLowerCase())) ||
+        ''
+      ).toLowerCase();
       const isDefinitionChunk = mainTopic && text.toLowerCase().trim().startsWith(mainTopic);
       
       return {
@@ -330,34 +488,83 @@ export async function retrieveContext(query) {
       console.log(`[RAG] Query: "${query}" - Found ${topChunks.length} relevant chunks (from ${chunkScores.size} candidates)`);
       if (topChunks.length > 0) {
         console.log(`[RAG] Top chunk scores: ${scoredChunks.slice(0, 3).map(c => c.score.toFixed(1)).join(', ')}`);
+        
+        // Debug: Show what's actually in the top chunks
+        console.log(`[RAG] Core phrase searched: "${corePhrase}"`);
+        topChunks.slice(0, 3).forEach((chunk, idx) => {
+          const chunkLower = chunk.toLowerCase();
+          const chunkPreview = chunk.substring(0, 200).replace(/\n/g, ' ');
+          const containsCorePhrase = corePhrase && chunkLower.includes(corePhrase.toLowerCase());
+          const containsHyphenated = corePhraseHyphenated && chunkLower.includes(corePhraseHyphenated.toLowerCase());
+          console.log(`[RAG] Chunk ${idx + 1} (score: ${scoredChunks[idx].score.toFixed(1)}): "${chunkPreview}..."`);
+          console.log(`[RAG]   - Contains core phrase: ${containsCorePhrase || containsHyphenated}`);
+          if (corePhrase) {
+            const phraseIndex = chunkLower.indexOf(corePhrase.toLowerCase());
+            const hyphenIndex = corePhraseHyphenated ? chunkLower.indexOf(corePhraseHyphenated.toLowerCase()) : -1;
+            if (phraseIndex !== -1) {
+              console.log(`[RAG]   - Found at position: ${phraseIndex}`);
+            } else if (hyphenIndex !== -1) {
+              console.log(`[RAG]   - Found hyphenated version at position: ${hyphenIndex}`);
+            } else {
+              // Show what words ARE present
+              const queryWordsLower = queryLower.split(/\s+/).filter(w => w.length > 2);
+              const foundWords = queryWordsLower.filter(word => chunkLower.includes(word));
+              console.log(`[RAG]   - Contains words: ${foundWords.join(', ')}`);
+            }
+          }
+        });
       }
     }
     
-    // Only return results if we have good matches (strict threshold)
+    // Filter results: prioritize chunks that actually contain the core phrase
+    // For multi-word queries, we need to be strict - only return chunks with the phrase
+    if (corePhrase && corePhrase.length > 5) {
+      // First, try to find chunks that contain the actual phrase
+      const phraseMatches = topChunks.filter((chunk, idx) => {
+        const chunkLower = chunk.toLowerCase();
+        const hasExactPhrase = chunkLower.includes(corePhrase.toLowerCase());
+        const hasHyphenated = corePhraseHyphenated && chunkLower.includes(corePhraseHyphenated.toLowerCase());
+        const hasPartialHyphenated = chunkLower.includes('rule-based') && chunkLower.includes('access') && chunkLower.includes('control');
+        
+        return hasExactPhrase || hasHyphenated || hasPartialHyphenated;
+      });
+      
+      if (phraseMatches.length > 0) {
+        // Return chunks that actually contain the phrase (these are the real matches)
+        console.log(`[RAG] ✅ Found ${phraseMatches.length} chunks containing the core phrase "${corePhrase}"`);
+        return phraseMatches.slice(0, 5);
+      } else {
+        // No chunks contain the phrase - log this for debugging
+        console.log(`[RAG] ⚠️ No chunks found containing core phrase "${corePhrase}" - chunks may not exist in database`);
+        // Still return top chunks but with lower confidence
+        const highQualityMatches = topChunks.filter((_, idx) =>
+          scoredChunks[idx].score > 200  // Very high threshold if phrase not found
+        );
+        
+        if (highQualityMatches.length > 0) {
+          return highQualityMatches.slice(0, 3);
+        }
+        
+        // Last resort: return empty if we can't find the phrase
+        return [];
+      }
+    }
+    
+    // For single-word queries, use standard filtering
     const goodMatches = topChunks.filter((_, idx) => 
-      scoredChunks[idx].score > 50  // Stricter threshold
+      scoredChunks[idx].score > 30
     );
     
     if (goodMatches.length > 0) {
-      // Further filter: if we have very high scoring chunks, prefer those
       const highQualityMatches = goodMatches.filter((_, idx) =>
         scoredChunks[idx].score > 100
       );
       
       if (highQualityMatches.length >= 2) {
-        return highQualityMatches.slice(0, 3); // Only return high-quality ones
+        return highQualityMatches.slice(0, 3);
       }
       
       return goodMatches.slice(0, 5);
-    }
-    
-    // If we have medium quality matches (30-50), return max 2
-    const mediumMatches = topChunks.filter((_, idx) => 
-      scoredChunks[idx].score > 30 && scoredChunks[idx].score <= 50
-    );
-    
-    if (mediumMatches.length > 0) {
-      return mediumMatches.slice(0, 2); // Return fewer, lower quality ones
     }
     
     // Last resort: return empty (better than random junk)

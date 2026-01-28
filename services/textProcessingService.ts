@@ -990,27 +990,89 @@ export const extractGraphFromChunk = (chunk: string): GraphData => {
 };
 
 /**
- * Extract graph from mixed PDF content
- * For text pages, uses NLP extraction
+ * Extract graph from mixed PDF content (ASYNC, CHUNKED)
+ * For text pages, uses NLP extraction in chunks to prevent UI blocking
  * For image pages, returns empty graph (images can't be processed without vision model)
  */
-export const extractGraphFromMixedContent = (pages: PdfPage[]): GraphData => {
+export const extractGraphFromMixedContent = async (pages: PdfPage[]): Promise<GraphData> => {
+  const perfStart = performance.now();
+  const textPages = pages.filter(page => page.type === 'text');
+  console.log(`[PERF-NLP] 🔍 Starting ASYNC chunked extraction on ${textPages.length} text pages (${pages.length} total pages)`);
+  
   try {
-    // Combine all text pages
-    const textContent = pages
-      .filter(page => page.type === 'text')
-      .map(page => page.content)
-      .join('\n\n');
-    
-    if (!textContent.trim()) {
-      // Only images, return empty graph
+    if (textPages.length === 0) {
+      console.log(`[PERF-NLP] ⚠️ No text pages found, returning empty graph`);
       return { nodes: [], links: [] };
     }
     
-    // Extract entities and relationships from combined text
-    return extractGraphFromChunk(textContent);
+    // Process in chunks to prevent UI blocking
+    // Each chunk processes ~50 pages (roughly 50-100KB of text)
+    const CHUNK_SIZE = 50;
+    const totalChunks = Math.ceil(textPages.length / CHUNK_SIZE);
+    const allNodes: Node[] = [];
+    const allLinks: Link[] = [];
+    const nodeIdMap = new Map<string, Node>(); // For deduplication
+    
+    console.log(`[PERF-NLP] 📦 Processing ${textPages.length} pages in ${totalChunks} chunks of ${CHUNK_SIZE} pages each`);
+    
+    for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+      const chunkStart = performance.now();
+      const startIdx = chunkIndex * CHUNK_SIZE;
+      const endIdx = Math.min(startIdx + CHUNK_SIZE, textPages.length);
+      const chunkPages = textPages.slice(startIdx, endIdx);
+      
+      // Combine chunk pages
+      const chunkText = chunkPages
+        .map(page => page.content)
+        .join('\n\n');
+      
+      if (!chunkText.trim()) {
+        console.log(`[PERF-NLP] ⏭️ Skipping empty chunk ${chunkIndex + 1}/${totalChunks}`);
+        continue;
+      }
+      
+      // Extract from this chunk
+      const chunkResult = extractGraphFromChunk(chunkText);
+      
+      // Merge nodes (deduplicate by id)
+      chunkResult.nodes.forEach(node => {
+        const nodeIdLower = node.id.toLowerCase();
+        if (!nodeIdMap.has(nodeIdLower)) {
+          nodeIdMap.set(nodeIdLower, node);
+          allNodes.push(node);
+        }
+      });
+      
+      // Merge links
+      allLinks.push(...chunkResult.links);
+      
+      const chunkTime = performance.now() - chunkStart;
+      console.log(`[PERF-NLP] ✅ Chunk ${chunkIndex + 1}/${totalChunks} complete: ${chunkResult.nodes.length} nodes, ${chunkResult.links.length} links in ${chunkTime.toFixed(2)}ms`);
+      
+      // Yield to browser every chunk to prevent UI freeze
+      // Use requestIdleCallback if available, otherwise setTimeout
+      if (chunkIndex < totalChunks - 1) {
+        await new Promise(resolve => {
+          if ('requestIdleCallback' in window) {
+            (window as any).requestIdleCallback(resolve, { timeout: 100 });
+          } else {
+            setTimeout(resolve, 0);
+          }
+        });
+      }
+    }
+    
+    const totalTime = performance.now() - perfStart;
+    const result = { nodes: allNodes, links: allLinks };
+    
+    console.log(`[PERF-NLP] ✅ ASYNC extraction complete: ${result.nodes.length} nodes, ${result.links.length} links`);
+    console.log(`[PERF-NLP] ⏱️ Total processing time: ${totalTime.toFixed(2)}ms (${(totalTime / 1000).toFixed(2)}s)`);
+    console.log(`[PERF-NLP] ✅ Chunked processing prevented UI freeze!`);
+    
+    return result;
   } catch (error) {
-    console.error("Mixed content extraction error:", error);
+    const totalTime = performance.now() - perfStart;
+    console.error(`[PERF-NLP] ❌ Mixed content extraction error after ${totalTime.toFixed(2)}ms:`, error);
     return { nodes: [], links: [] };
   }
 };

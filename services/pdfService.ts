@@ -27,12 +27,18 @@ export const extractContentFromPdf = async (
   file: File,
   onProgress?: (current: number, total: number) => void
 ): Promise<ProcessedPdf> => {
+  const perfStart = performance.now();
+  console.log(`[PERF-PDF] 📄 Starting PDF extraction for file: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)}MB)`);
+  
   try {
+    const loadStart = performance.now();
     const arrayBuffer = await file.arrayBuffer();
+    console.log(`[PERF-PDF] ⏱️ File loaded in ${(performance.now() - loadStart).toFixed(2)}ms`);
     
     // Load Document
     // We use the CDN for cMaps as well to ensure robust text extraction for 
     // PDFs with non-standard fonts, matching the library version.
+    const parseStart = performance.now();
     const loadingTask = pdfjs.getDocument({
       data: arrayBuffer,
       cMapUrl: 'https://esm.sh/pdfjs-dist@3.11.174/cmaps/',
@@ -40,7 +46,10 @@ export const extractContentFromPdf = async (
     });
     
     const pdf = await loadingTask.promise;
+    const parseTime = performance.now() - parseStart;
     const totalPages = pdf.numPages;
+    console.log(`[PERF-PDF] ⏱️ PDF parsed: ${totalPages} pages in ${parseTime.toFixed(2)}ms`);
+    
     const pages: PdfPage[] = [];
     let totalTextLength = 0;
     let totalImages = 0;
@@ -48,8 +57,11 @@ export const extractContentFromPdf = async (
     // Process pages with progress tracking
     // For large PDFs, yield to browser periodically to prevent freezing
     const BATCH_SIZE = 50; // Process 50 pages at a time before yielding
+    const pageProcessStart = performance.now();
+    let lastYieldTime = performance.now();
     
     for (let i = 1; i <= totalPages; i++) {
+      const pageStart = performance.now();
       const page = await pdf.getPage(i);
       
       // 1. Attempt Text Extraction
@@ -97,11 +109,24 @@ export const extractContentFromPdf = async (
         onProgress(i, totalPages);
       }
       
+      const pageTime = performance.now() - pageStart;
+      if (pageTime > 100) {
+        console.warn(`[PERF-PDF] ⚠️ Page ${i} took ${pageTime.toFixed(2)}ms (SLOW)`);
+      }
+      
       // Yield to browser every BATCH_SIZE pages to prevent UI freezing
       if (i % BATCH_SIZE === 0) {
+        const timeSinceLastYield = performance.now() - lastYieldTime;
+        console.log(`[PERF-PDF] 🔄 Yielding after ${BATCH_SIZE} pages (${timeSinceLastYield.toFixed(2)}ms since last yield)`);
         await new Promise(resolve => setTimeout(resolve, 0));
+        lastYieldTime = performance.now();
       }
     }
+    
+    const pageProcessTime = performance.now() - pageProcessStart;
+    const totalTime = performance.now() - perfStart;
+    console.log(`[PERF-PDF] ✅ PDF extraction complete: ${pages.length} pages (${totalTextLength} chars text, ${totalImages} images) in ${totalTime.toFixed(2)}ms`);
+    console.log(`[PERF-PDF] 📊 Page processing took ${pageProcessTime.toFixed(2)}ms (avg ${(pageProcessTime / totalPages).toFixed(2)}ms/page)`);
 
     return {
       pages,
