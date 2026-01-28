@@ -128,57 +128,97 @@ export async function saveDocumentToNeo4j(
   entityIds?: string[],
   timeout: number = 300000 // 5 minutes default timeout
 ): Promise<SaveDocumentResponse> {
+  // To avoid Vercel/Lambda timeouts and very large request bodies with huge PDFs,
+  // we batch the chunks and send multiple smaller requests.
+  const BATCH_SIZE = 200;
   const isDev = import.meta.env.DEV;
-  
-  if (isDev) {
-    console.log(`[Frontend] Saving document: ${docName} (${chunks.length} chunks)`);
-  }
-  
-  const headers = await getAuthHeaders();
-  
-  // Create AbortController for timeout
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeout);
-  
-  try {
-    const startTime = Date.now();
-    const response = await fetch(`${API_BASE_URL}/documents/save`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        docId,
-        docName,
-        chunks,
-        entities: entityIds || []
-      }),
-      signal: controller.signal
-    });
 
-    clearTimeout(timeoutId);
-    const duration = Date.now() - startTime;
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: response.statusText }));
-      console.error(`[Frontend] Failed to save document:`, error);
-      throw new Error(`Failed to save document: ${error.error || response.statusText}`);
-    }
-
-    const result = await response.json();
-    
+  // Helper to post a single batch of chunks
+  const postBatch = async (
+    batchChunks: Array<{ id: string; text: string; sourceDoc: string }>,
+    batchIndex: number,
+    totalBatches: number
+  ): Promise<SaveDocumentResponse> => {
     if (isDev) {
-      console.log(`[Frontend] Document saved (${duration}ms)`);
+      console.log(
+        `[Frontend] Saving document batch ${batchIndex + 1}/${totalBatches}: ` +
+          `${docName} (${batchChunks.length} chunks in this batch)`
+      );
     }
-    
-    return result;
-  } catch (error: any) {
-    clearTimeout(timeoutId);
-    if (error.name === 'AbortError') {
-      console.error(`[Frontend] Request timeout saving document (${chunks.length} chunks)`);
-      throw new Error(`Request timeout: Saving ${chunks.length} chunks took too long. The backend may be processing. Try again or check server logs.`);
+
+    const headers = await getAuthHeaders();
+
+    // Create AbortController for timeout per batch
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+    try {
+      const startTime = Date.now();
+      const response = await fetch(`${API_BASE_URL}/documents/save`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          docId,
+          docName,
+          chunks: batchChunks,
+          // We can safely send the same entities for each batch; backend is idempotent
+          entities: entityIds || []
+        }),
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+      const duration = Date.now() - startTime;
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: response.statusText }));
+        console.error(`[Frontend] Failed to save document batch ${batchIndex + 1}:`, error);
+        throw new Error(`Failed to save document: ${error.error || response.statusText}`);
+      }
+
+      const result = await response.json();
+
+      if (isDev) {
+        console.log(
+          `[Frontend] Document batch ${batchIndex + 1}/${totalBatches} saved (${duration}ms)`
+        );
+      }
+
+      return result;
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        console.error(
+          `[Frontend] Request timeout saving document batch ${batchIndex + 1}/` +
+            `${totalBatches} (${batchChunks.length} chunks)`
+        );
+        throw new Error(
+          `Request timeout: Saving document batch ${batchIndex + 1}/${totalBatches} ` +
+            `(${batchChunks.length} chunks) took too long. The backend may still be processing.`
+        );
+      }
+      console.error(`[Frontend] Error saving document batch ${batchIndex + 1}:`, error);
+      throw error;
     }
-    console.error(`[Frontend] Error saving document:`, error);
-    throw error;
+  };
+
+  // If the document is small enough, just send it in a single request (fast path)
+  if (chunks.length <= BATCH_SIZE) {
+    return postBatch(chunks, 0, 1);
   }
+
+  // For very large documents, split into batches and send sequentially.
+  // This keeps each request/body small enough for Vercel and avoids long-running functions.
+  const totalBatches = Math.ceil(chunks.length / BATCH_SIZE);
+  for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+    const start = batchIndex * BATCH_SIZE;
+    const end = Math.min(start + BATCH_SIZE, chunks.length);
+    const batchChunks = chunks.slice(start, end);
+    await postBatch(batchChunks, batchIndex, totalBatches);
+  }
+
+  // If all batches succeeded, we treat the document as successfully saved.
+  return { success: true };
 }
 
 /**

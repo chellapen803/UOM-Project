@@ -129,9 +129,20 @@ Backend API (Vercel Serverless)
   - Relationships are created between nodes
   - Deduplication handled by Neo4j MERGE operations
 - **Document & Chunks**: Saved using `saveDocumentToNeo4j()`
-  - Document metadata stored as Document node
-  - Text chunks stored as Chunk nodes
-  - Chunks linked to Document and related entities
+  - **Batched upload**: For large documents, chunks are automatically split into batches on the frontend before being sent to the backend, to avoid Vercel/serverless timeouts and oversized request bodies.
+  - Document metadata stored as `Document` node
+  - Text chunks stored as `Chunk` nodes
+  - Chunks linked to `Document` and related entities
+- **Why batching matters (Vercel/Serverless)**:
+  - Vercel serverless functions have strict execution time and payload limits.
+  - A single 800–1000+ page PDF can produce hundreds or thousands of chunks; sending them all in one request can cause:
+    - Request timeouts
+    - Silent partial ingestion (only early pages saved)
+  - To prevent this, `saveDocumentToNeo4j()` now:
+    - Splits the `chunks` array into smaller batches (default: 200 chunks per request)
+    - Sends each batch sequentially to `/api/documents/save`
+    - Treats the document as successfully saved only if **all** batches succeed
+  - The backend document save logic is idempotent for a given `docId`, so multiple calls with different subsets of chunks safely accumulate into a single complete document in Neo4j.
 - **Reload Graph**: Graph is reloaded from Neo4j to reflect all data
 - **State Update**: Updates `graphData` state with combined graph from Neo4j
 

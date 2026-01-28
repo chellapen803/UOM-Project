@@ -21,6 +21,7 @@
 ### Frontend (Updated)
 - **Neo4j Service Client** (`services/neo4jService.ts`)
   - API wrapper functions for backend communication
+  - **Batched document save**: `saveDocumentToNeo4j()` automatically splits very large documents into multiple smaller save requests to avoid Vercel/serverless timeouts and body size issues (critical for 500–1000+ page PDFs).
 - **App.tsx Updates**
   - Loads graph from Neo4j on mount
   - Saves extracted data to Neo4j
@@ -73,7 +74,7 @@ Neo4j Database
 ## 🔄 Data Flow
 
 1. **Document Upload:**
-   - User uploads → Compromise extracts → Frontend sends to Backend → Backend saves to Neo4j
+   - User uploads → Compromise extracts → Frontend **batches and sends chunks** to Backend → Backend saves to Neo4j
 
 2. **Graph Visualization:**
    - Frontend requests graph → Backend queries Neo4j → Returns data → D3.js visualizes
