@@ -285,12 +285,20 @@ export async function checkRGCNHealth(): Promise<RGCNHealthResponse> {
  * RAG chat endpoint - retrieves context and generates response using Gemini
  * This is the preferred method as it keeps API keys secure on the backend
  */
-export async function chatWithRAG(query: string): Promise<{ response: string; context: string[]; metadata?: any }> {
+export async function chatWithRAG(
+  query: string,
+  options?: { useRGCN?: boolean }
+): Promise<{ response: string; context: string[]; metadata?: any }> {
   const headers = await getAuthHeaders();
   const response = await fetch(`${API_BASE_URL}/rag/chat`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ query })
+    body: JSON.stringify({ 
+      query,
+      // Pass through flag so backend can explicitly enable/disable R-GCN per request.
+      // If undefined, backend keeps existing default behaviour.
+      useRGCN: options?.useRGCN 
+    })
   });
 
   const data = await response.json().catch(() => ({ error: response.statusText }));

@@ -130,7 +130,9 @@ router.post('/query', verifyToken, requireAuth, async (req, res) => {
 // RAG chat endpoint (retrieves context + generates response with Gemini) - requires authentication
 router.post('/chat', verifyToken, requireAuth, async (req, res) => {
   try {
-    const { query } = req.body;
+    const { query, useRGCN } = req.body;
+    // Default behaviour: if flag is not provided, keep existing behaviour (R-GCN on when available)
+    const shouldUseRGCN = useRGCN === undefined ? true : !!useRGCN;
     
     if (!query) {
       return res.status(400).json({ error: 'Query is required' });
@@ -139,10 +141,14 @@ router.post('/chat', verifyToken, requireAuth, async (req, res) => {
     // Check R-GCN service availability
     const rgcnHealth = await checkRGCNHealth();
     let context = [];
-    let metadata = { rgcnUsed: false, retrievalMethod: 'standard' };
+    let metadata = { 
+      rgcnUsed: false, 
+      retrievalMethod: 'standard',
+      rgcnRequested: shouldUseRGCN
+    };
     
-    // Step 1: Retrieve context (try R-GCN enhanced, fallback to standard)
-    if (rgcnHealth.available) {
+    // Step 1: Retrieve context (try R-GCN enhanced when requested, fallback to standard)
+    if (shouldUseRGCN && rgcnHealth.available) {
       try {
         const isDev = process.env.NODE_ENV !== 'production';
         if (isDev) {
@@ -150,12 +156,16 @@ router.post('/chat', verifyToken, requireAuth, async (req, res) => {
         }
         const rgcnResult = await retrieveContextWithRGCN(query, extractKeywords);
         context = rgcnResult.context;
-        metadata = rgcnResult.metadata || metadata;
+        metadata = {
+          ...metadata,
+          ...(rgcnResult.metadata || {})
+        };
       } catch (rgcnError) {
         console.warn('[RAG] R-GCN retrieval failed, falling back to standard:', rgcnError.message);
         // Fallback to standard retrieval
         context = await retrieveContext(query);
         metadata = {
+          ...metadata,
           rgcnUsed: false,
           rgcnError: rgcnError.message,
           retrievalMethod: 'standard_fallback'
@@ -164,10 +174,18 @@ router.post('/chat', verifyToken, requireAuth, async (req, res) => {
     } else {
       const isDev = process.env.NODE_ENV !== 'production';
       if (isDev) {
-        console.log('[RAG] R-GCN service unavailable, using standard retrieval');
+        if (!shouldUseRGCN) {
+          console.log('[RAG] R-GCN explicitly disabled, using standard retrieval');
+        } else {
+          console.log('[RAG] R-GCN service unavailable, using standard retrieval');
+        }
       }
       context = await retrieveContext(query);
-      metadata = { rgcnUsed: false, retrievalMethod: 'standard' };
+      metadata = { 
+        ...metadata,
+        rgcnUsed: false, 
+        retrievalMethod: shouldUseRGCN ? 'standard' : 'standard_disabled' 
+      };
     }
     
     // Step 2: Generate response using Gemini

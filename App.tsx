@@ -95,6 +95,7 @@ const App = () => {
   // R-GCN Status
   const [rgcnStatus, setRgcnStatus] = useState<'active' | 'inactive' | 'checking'>('checking');
   const [rgcnStats, setRgcnStats] = useState<RGCNHealthResponse | null>(null);
+  const [useRGCN, setUseRGCN] = useState<boolean>(true);
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const isLoadingMessagesRef = useRef(false);
@@ -426,30 +427,34 @@ const App = () => {
     setInputMessage('');
     setIsProcessing(true);
     
-    // Check R-GCN status dynamically before sending query
-    setProcessingStatus('Checking R-GCN status...');
-    try {
-      const health = await checkRGCNHealth();
-      if (health.available) {
-        setRgcnStatus('active');
-        setRgcnStats(health);
-        setProcessingStatus('Analyzing with R-GCN...');
-      } else {
+    // If user has R-GCN disabled, skip the per-message health check and use standard messaging.
+    if (useRGCN) {
+      setProcessingStatus('Checking R-GCN status...');
+      try {
+        const health = await checkRGCNHealth();
+        if (health.available) {
+          setRgcnStatus('active');
+          setRgcnStats(health);
+          setProcessingStatus('Analyzing with R-GCN...');
+        } else {
+          setRgcnStatus('inactive');
+          setRgcnStats(null);
+          setProcessingStatus('Thinking...');
+        }
+      } catch (error) {
+        // If check fails, mark as inactive and continue with standard retrieval
         setRgcnStatus('inactive');
         setRgcnStats(null);
         setProcessingStatus('Thinking...');
       }
-    } catch (error) {
-      // If check fails, mark as inactive and continue with standard retrieval
-      setRgcnStatus('inactive');
-      setRgcnStats(null);
+    } else {
       setProcessingStatus('Thinking...');
     }
 
     try {
       // Use backend RAG chat endpoint (retrieves context + generates response)
       // This keeps the API key secure on the backend
-      const result = await chatWithRAG(query);
+      const result = await chatWithRAG(query, { useRGCN });
       
       const botMsg: Message = {
         role: 'model',
@@ -876,25 +881,48 @@ const App = () => {
                             </div>
                         </div>
                     </div>
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={async () => {
-                        setMessages([
-                          { role: 'system', content: 'Welcome to the Knowledge Graph Chatbot. I can answer questions based on the documents you upload.', timestamp: Date.now() }
-                        ]);
-                        // Clear from Firestore
-                        if (appUser) {
-                          try {
-                            await clearChatMessages(appUser.uid);
-                          } catch (error) {
-                            console.error('Error clearing chat messages:', error);
+                    <div className="flex items-center gap-4">
+                      {/* R-GCN Toggle */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-slate-500 hidden sm:inline">R-GCN Retrieval</span>
+                        <button
+                          type="button"
+                          onClick={() => setUseRGCN((prev) => !prev)}
+                          className={cn(
+                            "relative inline-flex h-5 w-9 items-center rounded-full transition-colors",
+                            useRGCN ? "bg-purple-500" : "bg-slate-300"
+                          )}
+                          aria-pressed={useRGCN}
+                          aria-label="Toggle R-GCN retrieval"
+                        >
+                          <span
+                            className={cn(
+                              "inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform",
+                              useRGCN ? "translate-x-4" : "translate-x-1"
+                            )}
+                          />
+                        </button>
+                      </div>
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={async () => {
+                          setMessages([
+                            { role: 'system', content: 'Welcome to the Knowledge Graph Chatbot. I can answer questions based on the documents you upload.', timestamp: Date.now() }
+                          ]);
+                          // Clear from Firestore
+                          if (appUser) {
+                            try {
+                              await clearChatMessages(appUser.uid);
+                            } catch (error) {
+                              console.error('Error clearing chat messages:', error);
+                            }
                           }
-                        }
-                      }}
-                    >
-                        Clear Chat
-                    </Button>
+                        }}
+                      >
+                          Clear Chat
+                      </Button>
+                    </div>
                 </header>
                 
                 <div className="flex-1 overflow-y-auto p-4 md:p-6 scroll-smooth" ref={scrollRef}>
