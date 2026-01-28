@@ -147,7 +147,21 @@ const extractSemanticContext = (sentence: string, sourceId: string, targetId: st
                     prepString.includes('by');
   
   // Extract noun phrases that might indicate relationships
-  const nounPhrases = sentDoc.nouns().toNounPhrase().out('array');
+  // Note: Some versions/plugins of `compromise` don't support `.toNounPhrase()`,
+  // so we fall back to plain nouns to avoid runtime errors.
+  let nounPhrases: string[] = [];
+  try {
+    // @ts-ignore - toNounPhrase may not exist depending on compromise version
+    if (typeof sentDoc.nouns().toNounPhrase === 'function') {
+      // Use richer noun phrase extraction when available
+      // @ts-ignore
+      nounPhrases = sentDoc.nouns().toNounPhrase().out('array');
+    } else {
+      nounPhrases = sentDoc.nouns().out('array');
+    }
+  } catch {
+    nounPhrases = sentDoc.nouns().out('array');
+  }
   
   return {
     verbs,

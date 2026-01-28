@@ -308,7 +308,6 @@ const App = () => {
         const extracted = extractGraphFromMixedContent(pdfPages);
         newNodes = [...newNodes, ...extracted.nodes];
         newLinks = [...newLinks, ...extracted.links];
-        console.log(`[App] PDF extraction: ${extracted.nodes.length} nodes, ${extracted.links.length} links extracted`);
         setIngestProgress({ current: 1, total: 3, phase: 'Entities extracted from PDF' });
 
     } 
@@ -383,18 +382,12 @@ const App = () => {
         clearPdfSelection();
       }
       
-      // ALWAYS reload graph from Neo4j after saving to ensure UI matches database
-      // This is critical because:
-      // 1. Extraction might return empty arrays but Neo4j might have deduplicated/merged nodes
-      // 2. Neo4j might have additional nodes from previous ingestions
-      // 3. We want to show the true state of the database, not just what we extracted
+      // Reload graph from Neo4j after saving to ensure UI matches database
       setProcessingStatus('Reloading graph from database...');
       try {
         const updatedGraph = await loadGraphFromNeo4j();
         setGraphData(updatedGraph);
-        console.log(`[App] Graph reloaded: ${updatedGraph.nodes.length} nodes, ${updatedGraph.links.length} links`);
       } catch (error) {
-        console.error('[App] Failed to reload graph from Neo4j:', error);
         // Fallback: update with extracted data if reload fails
         setGraphData(prev => {
           const allNodes = [...prev.nodes, ...newNodes];
@@ -407,7 +400,6 @@ const App = () => {
           
           return { nodes: uniqueNodes, links: allLinks };
         });
-        console.warn('[App] Using extracted data as fallback (reload failed)');
       } finally {
         setProcessingStatus('');
       }
