@@ -95,11 +95,13 @@ export async function getGraphData() {
       ORDER BY id
     `);
     
-    const nodes = nodeResult.records.map(record => ({
-      id: record.get('id'),
-      label: record.get('label'),
-      group: record.get('group') || 1
-    }));
+    const nodes = nodeResult.records
+      .filter(record => record.get('id')) // Filter out nodes without id
+      .map(record => ({
+        id: record.get('id'),
+        label: record.get('label') || 'Entity',
+        group: record.get('group') || 1
+      }));
     
     // Get all relationships
     const linkResult = await session.run(`
