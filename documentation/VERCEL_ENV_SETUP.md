@@ -20,12 +20,16 @@ NEO4J_USERNAME=neo4j
 NEO4J_PASSWORD=your_neo4j_aura_password
 NEO4J_DATABASE=neo4j
 GEMINI_API_KEY=your_gemini_api_key_here
+PYTHON_RGCN_URL=https://your-rgcn-service.onrender.com
 ```
 
 **Important:**
 - Replace `your_gemini_api_key_here` with your actual Gemini API key
+- Replace `your-rgcn-service.onrender.com` with your Render R-GCN service URL (optional - omit if not using R-GCN)
 - Set each variable for all three environments (Production, Preview, Development)
 - The backend supports both `NEO4J_USER` and `NEO4J_USERNAME`
+
+**Note**: `PYTHON_RGCN_URL` is optional. If you haven't deployed the R-GCN service to Render yet, you can omit this variable. The app will work without R-GCN enhancement (using standard retrieval). See [RGCN_SETUP.md](./RGCN_SETUP.md) for R-GCN deployment instructions.
 
 ## Step 3: Add Frontend Environment Variables
 
@@ -68,10 +72,12 @@ After your first successful deployment:
 - [ ] Add Neo4j credentials (NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD, NEO4J_DATABASE)
 - [ ] Add GEMINI_API_KEY
 - [ ] Add VITE_API_URL (placeholder - update after first deploy)
+- [ ] (Optional) Add PYTHON_RGCN_URL if using R-GCN service on Render
 - [ ] Deploy to Vercel
 - [ ] Update VITE_API_URL with actual deployment URL
 - [ ] Test health endpoint: `https://your-project.vercel.app/api/health`
 - [ ] Test document upload and graph creation
+- [ ] (If using R-GCN) Verify R-GCN service is accessible and frontend shows green badge
 
 ## Testing After Deployment
 

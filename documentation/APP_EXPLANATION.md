@@ -7,6 +7,7 @@ NeuroGraph is a Knowledge Graph RAG (Retrieval-Augmented Generation) application
 
 ## Architecture Overview
 
+### Local Development
 ```
 User Upload (Text/PDF)
     ↓
@@ -17,7 +18,29 @@ User Upload (Text/PDF)
 Knowledge Graph (Nodes & Links)
     ↓
 [Chat Interface] → RAG Retrieval → [Gemini API] → Response
+         ↓
+    [R-GCN Service] (localhost:8000) - Optional semantic enhancement
 ```
+
+### Production Deployment
+```
+Frontend (Vercel)
+    ↓
+Backend API (Vercel Serverless)
+    ↓
+┌─────────────────┐
+│  Neo4j Aura     │ (Cloud Database)
+└─────────────────┘
+    ↓
+┌─────────────────┐
+│ R-GCN Service   │ (Render.com) - Python ML Service
+│ FastAPI         │
+└─────────────────┘
+    ↓
+[Chat Interface] → RAG Retrieval (with R-GCN enhancement) → [Gemini API] → Response
+```
+
+**Note**: In production, the R-GCN service runs on Render.com because Vercel serverless functions are not suitable for long-running Python services with heavy ML dependencies. The service maintains persistent connections to Neo4j and keeps the trained model loaded in memory.
 
 ---
 
@@ -161,19 +184,25 @@ Knowledge Graph (Nodes & Links)
 - **Backend Service**: `ragService.js` uses Neo4j Cypher queries
 
 **Enhanced RAG Retrieval Strategy**:
-1. **Graph-Based Entity Search**:
+1. **R-GCN Enhanced Retrieval** (if available):
+   - Checks if R-GCN service is available (hosted on Render.com)
+   - Uses semantic embeddings to find similar entities
+   - Leverages graph structure for better context matching
+   - Falls back to standard retrieval if R-GCN unavailable
+
+2. **Graph-Based Entity Search**:
    - Queries Neo4j for entities matching query keywords
    - Finds chunks linked to those entities via relationships
    - Multi-hop traversal: follows relationships to find related entities and their chunks
 
-2. **Keyword-Based Fallback**:
+3. **Keyword-Based Fallback**:
    - If no entities found, searches all chunks for query keywords
    - Uses text search on chunk content
 
-3. **Graph Summary Fallback**:
+4. **Graph Summary Fallback**:
    - If still no matches, returns list of known entities from graph
 
-**Result**: Returns top 3 most relevant text chunks from Neo4j
+**Result**: Returns top 3 most relevant text chunks from Neo4j (enhanced with R-GCN semantic similarity if available)
 
 #### Step 12: Generate Response with Gemini
 - **Function**: `generateRAGResponse()` in `geminiService.ts`

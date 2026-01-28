@@ -10,7 +10,13 @@
 Vercel Deployment:
 ├── Frontend (Static) → / (root)
 └── Backend (Serverless) → /api/*
+
+External Services:
+├── Neo4j Aura → Cloud Database
+└── R-GCN Service (Render.com) → Python ML Service
 ```
+
+**Note**: The R-GCN Python service is hosted separately on Render.com because Vercel serverless functions are not suitable for long-running Python services with heavy ML dependencies (PyTorch). The Node.js backend on Vercel connects to the Render-hosted R-GCN service via the `PYTHON_RGCN_URL` environment variable.
 
 ## Prerequisites
 
@@ -42,7 +48,10 @@ In Vercel Dashboard → Your Project → Settings → Environment Variables:
 NEO4J_URI=neo4j+s://xxxxx.databases.neo4j.io
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=your_aura_password
+PYTHON_RGCN_URL=https://your-rgcn-service.onrender.com
 ```
+
+**Note**: `PYTHON_RGCN_URL` should point to your Render-hosted R-GCN service. If you haven't deployed R-GCN yet, you can omit this variable and the app will work without R-GCN enhancement (using standard retrieval).
 
 **Frontend (must start with VITE_):**
 ```
@@ -136,9 +145,37 @@ Note the protocol difference: `bolt://` vs `neo4j+s://`
 - Consider splitting large operations
 - Or use Render/Railway for backend instead
 
+## R-GCN Service Deployment
+
+The R-GCN Python service must be deployed separately on Render.com:
+
+### Why Separate Hosting?
+
+- **Vercel Limitations**: Serverless functions are not suitable for long-running Python services
+- **Heavy Dependencies**: PyTorch and ML libraries require persistent runtime
+- **Better Performance**: Render provides dedicated resources for Python ML services
+
+### Deployment Steps
+
+1. **Deploy R-GCN to Render**:
+   - Create a Web Service on Render.com
+   - Set root directory to `backend/python-rgcn`
+   - Configure environment variables (Neo4j connection, etc.)
+   - See [RGCN_SETUP.md](./RGCN_SETUP.md) for detailed instructions
+
+2. **Connect Vercel to Render**:
+   - Add `PYTHON_RGCN_URL` environment variable in Vercel
+   - Set value to your Render service URL
+   - Redeploy Vercel
+
+3. **Verify**:
+   - Check Render service health endpoint
+   - Verify frontend shows green R-GCN badge
+   - Test chat functionality
+
 ## Alternative: Separate Backend Hosting
 
-If you prefer not to use Vercel serverless for backend:
+If you prefer not to use Vercel serverless for the main backend:
 
 ### Option 1: Render.com (Recommended)
 1. Deploy backend to Render
@@ -158,7 +195,10 @@ Similar to Render, good free tier
 - **Vercel Frontend**: Free (Hobby plan)
 - **Vercel Serverless**: Free (with limits)
 - **Neo4j Aura**: Free tier available
+- **Render R-GCN Service**: Free tier available (spins down after inactivity)
 - **Total**: $0/month (with free tiers)
+
+**Note**: Render free tier spins down after 15 minutes of inactivity, causing a ~30 second cold start on first request. Consider upgrading to Starter plan ($7/month) for always-on service in production.
 
 ## Next Steps After Deployment
 

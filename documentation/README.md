@@ -95,6 +95,8 @@ A Knowledge Graph-based Retrieval-Augmented Generation (RAG) application that ex
    python app.py
    ```
    See [RGCN_SETUP.md](./RGCN_SETUP.md) for detailed setup instructions.
+   
+   **Note**: In production, the R-GCN service is deployed separately on Render.com. See [RGCN_SETUP.md](./RGCN_SETUP.md) for deployment instructions.
 
 8. **Open the app**
    - Frontend: http://localhost:5173 (or the port Vite assigns)
@@ -112,6 +114,7 @@ All documentation is available in the `documentation/` folder:
 - **[INTEGRATION_SUMMARY.md](./INTEGRATION_SUMMARY.md)** - Neo4j integration overview
 - **[DEPLOYMENT.md](./DEPLOYMENT.md)** - Deployment guide for Vercel
 - **[VERCEL_DEPLOYMENT.md](./VERCEL_DEPLOYMENT.md)** - Detailed Vercel deployment steps
+- **[RGCN_SETUP.md](./RGCN_SETUP.md)** - R-GCN semantic embedding service setup (includes Render deployment)
 - **[NEO4J_PASSWORD_GUIDE.md](./NEO4J_PASSWORD_GUIDE.md)** - Setting Neo4j password
 - **[NEO4J_BACKUP.md](./NEO4J_BACKUP.md)** - Backup and export Neo4j data
 - **[NEO4J_DELETE_ALL.md](./NEO4J_DELETE_ALL.md)** - Delete all Neo4j data
@@ -150,6 +153,8 @@ UOM-Project/
 5. **Storage**: Graph data is saved to Neo4j for persistence
 6. **Visualization**: D3.js renders an interactive graph visualization
 7. **R-GCN Enhancement** (optional): Python service learns semantic embeddings for better retrieval
+   - **Local**: Runs on `localhost:8000`
+   - **Production**: Deployed separately on Render.com (connected via `PYTHON_RGCN_URL`)
 8. **Chatbot**: Users can ask questions; RAG retrieves relevant context from Neo4j (with optional R-GCN enhancement), Gemini generates responses
 
 ## License

@@ -509,7 +509,7 @@ const App = () => {
             <div className="bg-blue-600 p-1.5 rounded-lg">
                 <Share2 className="text-white h-5 w-5" />
             </div>
-            NeuroGraph
+            SecurityPlus Bot
           </div>
           <p className="text-xs text-slate-500 mt-2 font-medium">Knowledge Graph RAG</p>
         </div>

@@ -6,6 +6,7 @@ R-GCN (Relational Graph Convolutional Network) is a Python microservice that enh
 
 ## Architecture
 
+### Local Development
 ```
 Frontend (React)
     ↓
@@ -17,9 +18,28 @@ Express Backend (Node.js)
     ↓
 ┌─────────────────┐
 │ Python R-GCN    │ (Embedding Service)
-│ FastAPI Service │
+│ FastAPI Service │ (localhost:8000)
 └─────────────────┘
 ```
+
+### Production Deployment
+```
+Frontend + Backend (Vercel)
+    ↓
+┌─────────────────┐
+│  Neo4j Aura     │ (Cloud Database)
+└─────────────────┘
+    ↓
+┌─────────────────┐
+│ Python R-GCN    │ (Render.com)
+│ FastAPI Service │ (Hosted separately)
+└─────────────────┘
+```
+
+**Note**: In production, the R-GCN service is hosted separately on Render.com because:
+- Vercel serverless functions are not suitable for long-running Python services with heavy dependencies (PyTorch)
+- Render provides better support for Python applications with persistent state
+- The service needs to maintain connections to Neo4j and keep the model loaded in memory
 
 ## Prerequisites
 
@@ -294,6 +314,42 @@ The Express backend automatically:
 4. Includes R-GCN metadata in chat responses
 
 No additional configuration needed beyond setting `PYTHON_RGCN_URL`.
+
+## Production Deployment on Render
+
+For production deployments, the R-GCN service is hosted separately on Render.com:
+
+### Why Render?
+
+- **Long-running processes**: R-GCN needs to maintain persistent connections and loaded models
+- **Heavy dependencies**: PyTorch and related libraries work better on dedicated servers
+- **Better resource management**: Render provides more suitable resources for Python ML services
+- **Cost-effective**: Free tier available for development/testing
+
+### Deployment Steps
+
+1. **Create Render Web Service**:
+   - Service type: Web Service (not Background Worker)
+   - Root directory: `backend/python-rgcn`
+   - Build command: `pip install -r requirements.txt`
+   - Start command: `uvicorn app:app --host 0.0.0.0 --port $PORT`
+
+2. **Configure Environment Variables** on Render:
+   - `NEO4J_URI`: Your Neo4j Aura connection URI (use `neo4j+s://` protocol)
+   - `NEO4J_USER`: Neo4j username
+   - `NEO4J_PASSWORD`: Neo4j password
+   - `RGCN_EMBEDDING_DIM`, `RGCN_HIDDEN_DIM`, etc. (optional, defaults available)
+
+3. **Update Vercel Environment Variables**:
+   - Add `PYTHON_RGCN_URL`: Your Render service URL (e.g., `https://rgcn-service.onrender.com`)
+   - Redeploy Vercel to pick up the new variable
+
+4. **Verify Connection**:
+   - Check Render service health: `GET https://your-service.onrender.com/health`
+   - Check Vercel frontend shows green R-GCN badge
+   - Test chat functionality
+
+The Node.js backend on Vercel will automatically connect to the Render-hosted R-GCN service using the `PYTHON_RGCN_URL` environment variable.
 
 ## Best Practices
 

@@ -11,8 +11,19 @@ Deploy both frontend and backend on Vercel as serverless functions:
 - **Frontend**: Static React app (Vite build)
 - **Backend**: Express API as serverless functions
 - **Neo4j**: Must be hosted separately (Neo4j Aura recommended)
+- **R-GCN Service**: Must be hosted separately on Render.com (Python ML service)
 
 **See [VERCEL_DEPLOYMENT.md](./VERCEL_DEPLOYMENT.md) for complete step-by-step instructions.**
+
+**Note**: The R-GCN Python service is deployed separately on Render.com because Vercel serverless functions are not suitable for long-running Python services with heavy ML dependencies. The Node.js backend on Vercel connects to Render via the `PYTHON_RGCN_URL` environment variable.
+
+### R-GCN Service Hosting
+
+The R-GCN Python service is hosted separately on **Render.com**:
+
+- **Why Render?**: Vercel serverless functions are not suitable for long-running Python services with heavy ML dependencies (PyTorch)
+- **Connection**: Node.js backend on Vercel connects to Render via `PYTHON_RGCN_URL` environment variable
+- **Deployment**: See [RGCN_SETUP.md](./RGCN_SETUP.md) for Render deployment instructions
 
 ### Alternative Options
 
