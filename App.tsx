@@ -30,6 +30,7 @@ import {
 import { cn } from './lib/utils';
 import { useAuth } from './contexts/AuthContext';
 import { Auth } from './components/Auth';
+import { auth } from './config/firebase';
 import Quiz from './components/Quiz';
 import IngestQuizData from './components/IngestQuizData';
 
@@ -41,6 +42,32 @@ Google is a major competitor to Apple in the mobile operating system market.
 Neo4j is a graph database management system developed by Neo4j, Inc.
 Firebase provides backend services such as Firestore and Authentication.
 `;
+
+// Document item component with verification
+const DocumentItem = ({ doc, onVerify }: { doc: IngestedDocument; onVerify: () => void }) => {
+  return (
+    <div className="flex items-center justify-between text-sm group">
+      <div className="flex items-center gap-2 overflow-hidden flex-1">
+        <div className={cn("h-2 w-2 rounded-full flex-shrink-0", doc.status === 'ready' ? "bg-green-500" : "bg-yellow-500")} />
+        <span className="truncate font-medium text-slate-700">{doc.name}</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <Badge variant="secondary" className="text-xs font-normal">
+          {doc.chunkCount !== undefined ? doc.chunkCount : doc.chunks.length} chunks
+        </Badge>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onVerify}
+          className="h-6 px-2 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+          title="Verify which pages are in database"
+        >
+          <Search size={12} />
+        </Button>
+      </div>
+    </div>
+  );
+};
 
 const App = () => {
   // --- AUTH ---
@@ -300,6 +327,22 @@ const App = () => {
         const chunkStart = performance.now();
         console.log(`[PERF] 📄 Preparing ${pdfPages.length} PDF pages for chunking...`);
         
+        // Validate that we have pages from the expected range
+        const pageNumbers = pdfPages.map(p => p.pageNumber).sort((a, b) => a - b);
+        const minPage = pageNumbers[0];
+        const maxPage = pageNumbers[pageNumbers.length - 1];
+        const expectedPages = maxPage - minPage + 1;
+        
+        if (pdfPages.length !== expectedPages) {
+          const missingPages: number[] = [];
+          for (let i = minPage; i <= maxPage; i++) {
+            if (!pageNumbers.includes(i)) {
+              missingPages.push(i);
+            }
+          }
+          console.warn(`[PERF] ⚠️ WARNING: PDF has gaps in page numbers. Expected ${expectedPages} pages (${minPage}-${maxPage}) but have ${pdfPages.length} pages. Missing: ${missingPages.slice(0, 20).join(', ')}${missingPages.length > 20 ? '...' : ''}`);
+        }
+        
         chunks = pdfPages.map(p => ({
             id: Math.random().toString(36),
             text: p.type === 'text' ? p.content : `[Image Page ${p.pageNumber}]`,
@@ -308,6 +351,7 @@ const App = () => {
         
         const chunkTime = performance.now() - chunkStart;
         console.log(`[PERF] ✅ Chunking complete: ${chunks.length} chunks in ${chunkTime.toFixed(2)}ms`);
+        console.log(`[PERF] 📋 Page range: ${minPage}-${maxPage} (${pdfPages.length} pages total)`);
 
         // Total steps: 1 (NLP extraction) + 2 (graph save + doc save)
         setIngestProgress({ current: 0, total: 3, phase: 'Preparing PDF content' });
@@ -315,9 +359,12 @@ const App = () => {
         
         // Extract graph from all pages using async chunked processing
         const extractStart = performance.now();
-        console.log(`[PERF] 🔍 Starting ASYNC chunked NLP extraction on ${pdfPages.length} pages (${chunks.length} chunks)...`);
+        const pageRange = pdfPages.length > 0 
+          ? `pages ${Math.min(...pdfPages.map(p => p.pageNumber))}-${Math.max(...pdfPages.map(p => p.pageNumber))}`
+          : 'all pages';
+        console.log(`[PERF] 🔍 Starting ASYNC chunked NLP extraction on ${pdfPages.length} pages (${chunks.length} chunks, ${pageRange})...`);
         
-        setProcessingStatus(`Extracting entities from PDF (processing in chunks to keep UI responsive)...`);
+        setProcessingStatus(`Extracting entities from PDF (${pageRange}, processing in chunks to keep UI responsive)...`);
         
         const extracted = await extractGraphFromMixedContent(pdfPages);
         const extractTime = performance.now() - extractStart;
@@ -394,6 +441,49 @@ const App = () => {
       await saveDocumentToNeo4j(newDocId, docName, chunks, entityIds, docTimeout);
       const docSaveTime = performance.now() - docSaveStart;
       console.log(`[PERF] ✅ Document save complete in ${docSaveTime.toFixed(2)}ms`);
+      
+      // VERIFICATION: Verify that all chunks were saved
+      setProcessingStatus('Verifying ingestion...');
+      try {
+        const verifyStart = performance.now();
+        // Get auth headers using the same pattern as neo4jService
+        const getAuthHeaders = async () => {
+          const headers: HeadersInit = { 'Content-Type': 'application/json' };
+          try {
+            const user = auth.currentUser;
+            if (user) {
+              const token = await user.getIdToken();
+              headers['Authorization'] = `Bearer ${token}`;
+            }
+          } catch (error) {
+            console.warn('Failed to get auth token for verification:', error);
+          }
+          return headers;
+        };
+        
+        const verifyResponse = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/documents/verify/${newDocId}`, {
+          method: 'GET',
+          headers: await getAuthHeaders()
+        });
+        
+        if (verifyResponse.ok) {
+          const verifyData = await verifyResponse.json();
+          const savedChunks = verifyData.chunkCount || 0;
+          const verifyTime = performance.now() - verifyStart;
+          
+          if (savedChunks === chunks.length) {
+            console.log(`[PERF] ✅ Verification passed: All ${chunks.length} chunks saved successfully (${verifyTime.toFixed(2)}ms)`);
+          } else {
+            console.warn(`[PERF] ⚠️ Verification warning: Expected ${chunks.length} chunks but database has ${savedChunks} chunks`);
+            alert(`Warning: Expected ${chunks.length} chunks but only ${savedChunks} were saved. Some pages may be missing.`);
+          }
+        } else {
+          console.warn(`[PERF] ⚠️ Verification endpoint not available (status ${verifyResponse.status})`);
+        }
+      } catch (error) {
+        console.warn(`[PERF] ⚠️ Verification failed (endpoint may not exist):`, error);
+        // Don't fail the whole ingestion if verification fails
+      }
       
       // Update local documents state immediately (data is saved)
       const newDoc: IngestedDocument = {
@@ -821,15 +911,36 @@ const App = () => {
                                     <div className="text-sm text-slate-400 text-center py-4">No documents yet</div>
                                 )}
                                 {documents.map((doc) => (
-                                    <div key={doc.id} className="flex items-center justify-between text-sm group">
-                                        <div className="flex items-center gap-2 overflow-hidden">
-                                            <div className={cn("h-2 w-2 rounded-full flex-shrink-0", doc.status === 'ready' ? "bg-green-500" : "bg-yellow-500")} />
-                                            <span className="truncate font-medium text-slate-700">{doc.name}</span>
-                                        </div>
-                                        <Badge variant="secondary" className="text-xs font-normal">
-                                            {doc.chunkCount !== undefined ? doc.chunkCount : doc.chunks.length} chunks
-                                        </Badge>
-                                    </div>
+                                    <DocumentItem 
+                                        key={doc.id} 
+                                        doc={doc} 
+                                        onVerify={async () => {
+                                            try {
+                                                const headers: HeadersInit = { 'Content-Type': 'application/json' };
+                                                const user = auth.currentUser;
+                                                if (user) {
+                                                    const token = await user.getIdToken();
+                                                    headers['Authorization'] = `Bearer ${token}`;
+                                                }
+                                                const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/documents/verify/${doc.id}`, {
+                                                    method: 'GET',
+                                                    headers
+                                                });
+                                                if (response.ok) {
+                                                    const data = await response.json();
+                                                    const pageInfo = data.pageRange 
+                                                        ? `Pages ${data.pageRange.min}-${data.pageRange.max}`
+                                                        : 'Page range unknown';
+                                                    alert(`Document: ${doc.name}\nChunks in DB: ${data.chunkCount}\n${pageInfo}`);
+                                                } else {
+                                                    alert('Failed to verify document');
+                                                }
+                                            } catch (error) {
+                                                console.error('Verification error:', error);
+                                                alert('Error verifying document');
+                                            }
+                                        }}
+                                    />
                                 ))}
                             </CardContent>
                         </Card>

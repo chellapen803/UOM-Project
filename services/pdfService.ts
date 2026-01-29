@@ -53,6 +53,8 @@ export const extractContentFromPdf = async (
     const pages: PdfPage[] = [];
     let totalTextLength = 0;
     let totalImages = 0;
+    const processedPages = new Set<number>(); // Track which pages were successfully processed
+    const failedPages: number[] = []; // Track pages that failed
 
     // Process pages with progress tracking
     // For large PDFs, yield to browser periodically to prevent freezing
@@ -62,46 +64,58 @@ export const extractContentFromPdf = async (
     
     for (let i = 1; i <= totalPages; i++) {
       const pageStart = performance.now();
-      const page = await pdf.getPage(i);
       
-      // 1. Attempt Text Extraction
-      const textContent = await page.getTextContent();
-      const pageText = textContent.items
-        .map((item: any) => item.str)
-        .join(' ')
-        .trim();
-
-      // 2. Decide: Text or Image?
-      // Threshold: If less than 50 characters, assume it's a diagram/scan/image page.
-      if (pageText.length > 50) {
-        pages.push({
-          pageNumber: i,
-          type: 'text',
-          content: `[Page ${i}] ${pageText}`
-        });
-        totalTextLength += pageText.length;
-      } else {
-        // Render as Image
-        const viewport = page.getViewport({ scale: 1.5 }); // 1.5x scale for balance between quality and token usage
-        const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d');
+      try {
+        const page = await pdf.getPage(i);
         
-        if (context) {
-          canvas.height = viewport.height;
-          canvas.width = viewport.width;
-          
-          await page.render({ canvasContext: context, viewport: viewport }).promise;
-          
-          // Convert to base64 (JPEG 0.8 quality is sufficient for LLM vision)
-          const base64 = canvas.toDataURL('image/jpeg', 0.8);
-          
+        // 1. Attempt Text Extraction
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items
+          .map((item: any) => item.str)
+          .join(' ')
+          .trim();
+
+        // 2. Decide: Text or Image?
+        // Threshold: If less than 50 characters, assume it's a diagram/scan/image page.
+        if (pageText.length > 50) {
           pages.push({
             pageNumber: i,
-            type: 'image',
-            content: base64
+            type: 'text',
+            content: `[Page ${i}] ${pageText}`
           });
-          totalImages++;
+          totalTextLength += pageText.length;
+          processedPages.add(i);
+        } else {
+          // Render as Image
+          const viewport = page.getViewport({ scale: 1.5 }); // 1.5x scale for balance between quality and token usage
+          const canvas = document.createElement('canvas');
+          const context = canvas.getContext('2d');
+          
+          if (context) {
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+            
+            await page.render({ canvasContext: context, viewport: viewport }).promise;
+            
+            // Convert to base64 (JPEG 0.8 quality is sufficient for LLM vision)
+            const base64 = canvas.toDataURL('image/jpeg', 0.8);
+            
+            pages.push({
+              pageNumber: i,
+              type: 'image',
+              content: base64
+            });
+            totalImages++;
+            processedPages.add(i);
+          } else {
+            console.error(`[PERF-PDF] ❌ Failed to get canvas context for page ${i}`);
+            failedPages.push(i);
+          }
         }
+      } catch (error: any) {
+        console.error(`[PERF-PDF] ❌ Error processing page ${i}:`, error);
+        failedPages.push(i);
+        // Continue processing other pages even if one fails
       }
       
       // Report progress
@@ -125,8 +139,30 @@ export const extractContentFromPdf = async (
     
     const pageProcessTime = performance.now() - pageProcessStart;
     const totalTime = performance.now() - perfStart;
+    
+    // Validation: Check if all pages were processed
+    const missingPages: number[] = [];
+    for (let i = 1; i <= totalPages; i++) {
+      if (!processedPages.has(i)) {
+        missingPages.push(i);
+      }
+    }
+    
     console.log(`[PERF-PDF] ✅ PDF extraction complete: ${pages.length} pages (${totalTextLength} chars text, ${totalImages} images) in ${totalTime.toFixed(2)}ms`);
     console.log(`[PERF-PDF] 📊 Page processing took ${pageProcessTime.toFixed(2)}ms (avg ${(pageProcessTime / totalPages).toFixed(2)}ms/page)`);
+    console.log(`[PERF-PDF] 📋 Processed pages: ${processedPages.size}/${totalPages} (${((processedPages.size / totalPages) * 100).toFixed(1)}%)`);
+    
+    if (failedPages.length > 0) {
+      console.warn(`[PERF-PDF] ⚠️ Failed to process ${failedPages.length} page(s): ${failedPages.slice(0, 10).join(', ')}${failedPages.length > 10 ? '...' : ''}`);
+    }
+    
+    if (missingPages.length > 0) {
+      console.warn(`[PERF-PDF] ⚠️ Missing ${missingPages.length} page(s) from extraction: ${missingPages.slice(0, 10).join(', ')}${missingPages.length > 10 ? '...' : ''}`);
+    }
+    
+    if (pages.length !== totalPages) {
+      console.warn(`[PERF-PDF] ⚠️ WARNING: Expected ${totalPages} pages but extracted ${pages.length} pages. Some pages may be missing!`);
+    }
 
     return {
       pages,

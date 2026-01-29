@@ -435,3 +435,70 @@ export async function getDocuments() {
   }
 }
 
+/**
+ * Get chunk information for a specific document
+ * Used for verification after ingestion
+ */
+export async function getDocumentChunks(docId) {
+  const session = driver.session();
+  const isDev = process.env.NODE_ENV !== 'production';
+  
+  try {
+    // Get chunk count
+    const countResult = await session.run(`
+      MATCH (doc:Document {id: $docId})-[:CONTAINS]->(chunk:Chunk)
+      RETURN count(chunk) as chunkCount
+    `, { docId });
+    
+    const chunkCount = countResult.records[0]?.get('chunkCount')?.toNumber() || 0;
+    
+    // Get sample of chunk IDs to verify they exist
+    const sampleResult = await session.run(`
+      MATCH (doc:Document {id: $docId})-[:CONTAINS]->(chunk:Chunk)
+      RETURN chunk.id as chunkId
+      ORDER BY chunk.id
+      LIMIT 100
+    `, { docId });
+    
+    const sampleChunkIds = sampleResult.records.map(r => r.get('chunkId'));
+    
+    // Try to extract page numbers from chunk text to see page range
+    const pageRangeResult = await session.run(`
+      MATCH (doc:Document {id: $docId})-[:CONTAINS]->(chunk:Chunk)
+      WHERE chunk.text CONTAINS '[Page '
+      WITH chunk.text as text
+      LIMIT 1000
+      RETURN text
+    `, { docId });
+    
+    const pageNumbers = [];
+    pageRangeResult.records.forEach(record => {
+      const text = record.get('text');
+      const match = text.match(/\[Page (\d+)\]/);
+      if (match) {
+        pageNumbers.push(parseInt(match[1]));
+      }
+    });
+    
+    pageNumbers.sort((a, b) => a - b);
+    const minPage = pageNumbers.length > 0 ? pageNumbers[0] : null;
+    const maxPage = pageNumbers.length > 0 ? pageNumbers[pageNumbers.length - 1] : null;
+    
+    if (isDev) {
+      console.log(`[Neo4j] Document ${docId} verification: ${chunkCount} chunks, page range: ${minPage}-${maxPage}`);
+    }
+    
+    return {
+      docId,
+      chunkCount,
+      sampleChunkIds: sampleChunkIds.slice(0, 10), // Return first 10 as sample
+      pageRange: minPage && maxPage ? { min: minPage, max: maxPage } : null
+    };
+  } catch (error) {
+    console.error(`[Neo4j] Error getting document chunks for ${docId}:`, error);
+    throw error;
+  } finally {
+    await session.close();
+  }
+}
+

@@ -38,5 +38,18 @@ router.get('/list', verifyToken, requireAuth, async (req, res) => {
   }
 });
 
+// Verify document ingestion - check how many chunks were saved
+router.get('/verify/:docId', verifyToken, requireAuth, async (req, res) => {
+  try {
+    const { docId } = req.params;
+    const { getDocumentChunks } = await import('../services/neo4jService.js');
+    const result = await getDocumentChunks(docId);
+    res.json(result);
+  } catch (error) {
+    console.error('Error verifying document:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;
 
