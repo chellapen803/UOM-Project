@@ -62,7 +62,7 @@ export const Auth: React.FC = () => {
           <div className="mx-auto mb-4 h-12 w-12 bg-blue-600 rounded-full flex items-center justify-center">
             <LogIn className="h-6 w-6 text-white" />
           </div>
-          <CardTitle className="text-2xl">NeuroGraph</CardTitle>
+          <CardTitle className="text-2xl">SecurityPlus Bot</CardTitle>
           <CardDescription>
             {isLogin ? 'Sign in to continue' : 'Create a new account'}
           </CardDescription>

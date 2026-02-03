@@ -2,7 +2,7 @@
 
 ## Overview
 
-The NeuroGraph application now uses Firebase Authentication with role-based access control:
+The SecurityPlus Bot application now uses Firebase Authentication with role-based access control:
 
 - **Regular Users**: Can access the chat interface
 - **Superusers**: Can access chat, upload documents, and view the graph

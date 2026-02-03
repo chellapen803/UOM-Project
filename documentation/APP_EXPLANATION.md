@@ -1,7 +1,7 @@
-# NeuroGraph Application - Step-by-Step Explanation
+# SecurityPlus Bot Application - Step-by-Step Explanation
 
 ## Overview
-NeuroGraph is a Knowledge Graph RAG (Retrieval-Augmented Generation) application that extracts entities and relationships from documents to build a knowledge graph, then uses it to power an intelligent chatbot.
+SecurityPlus Bot is a Knowledge Graph RAG (Retrieval-Augmented Generation) application that extracts entities and relationships from documents to build a knowledge graph, then uses it to power an intelligent chatbot.
 
 ---
 

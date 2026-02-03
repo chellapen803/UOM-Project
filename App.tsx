@@ -1184,7 +1184,7 @@ const App = () => {
                             <Input 
                                 value={inputMessage}
                                 onChange={(e) => setInputMessage(e.target.value)}
-                                placeholder="Message NeuroGraph..."
+                                placeholder="Message SecurityPlus Bot..."
                                 disabled={isProcessing}
                                 className="pr-12 py-6 text-base rounded-full shadow-sm border-slate-200 focus-visible:ring-blue-500"
                             />

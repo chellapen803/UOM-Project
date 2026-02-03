@@ -1,6 +1,6 @@
 # Firebase Authentication Setup Guide
 
-This guide will help you set up Firebase Authentication for the NeuroGraph application.
+This guide will help you set up Firebase Authentication for the SecurityPlus Bot application.
 
 ## Prerequisites
 
@@ -74,12 +74,7 @@ service cloud.firestore {
       allow write: if request.auth != null && request.auth.uid == userId;
     }
     
-    // Users can only read/write their own chat messages
-    match /chats/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
-    }
-    
-    // Only authenticated users can read/write (fallback for other collections)
+    // Only authenticated users can read/write
     match /{document=**} {
       allow read, write: if request.auth != null;
     }
