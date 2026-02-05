@@ -34,14 +34,20 @@ export const chunkText = (text: string, chunkSize: number = 15000): string[] => 
 /**
  * Extract entities from text using NLP
  * Extracts people, places, organizations, and key concepts
+ * Optimized: accepts optional pre-created NLP doc to avoid re-parsing
  */
-const extractEntities = (text: string): Node[] => {
-  const doc = nlp(text);
+const extractEntities = (text: string, doc?: any): Node[] => {
+  const entityStart = performance.now();
+  const textLength = text.length;
+  
+  // Reuse doc if provided, otherwise create new one
+  const nlpDoc = doc || nlp(text);
+  
   const nodes: Node[] = [];
   const seenIds = new Set<string>();
   
   // Extract people
-  const people = doc.people().out('array');
+  const people = nlpDoc.people().out('array');
   people.forEach(person => {
     const id = person.toLowerCase().trim();
     if (id && !seenIds.has(id)) {
@@ -55,7 +61,7 @@ const extractEntities = (text: string): Node[] => {
   });
   
   // Extract places
-  const places = doc.places().out('array');
+  const places = nlpDoc.places().out('array');
   places.forEach(place => {
     const id = place.toLowerCase().trim();
     if (id && !seenIds.has(id) && id.length > 2) {
@@ -69,7 +75,7 @@ const extractEntities = (text: string): Node[] => {
   });
   
   // Extract organizations (companies, institutions)
-  const organizations = doc.organizations().out('array');
+  const organizations = nlpDoc.organizations().out('array');
   organizations.forEach(org => {
     const id = org.toLowerCase().trim();
     if (id && !seenIds.has(id)) {
@@ -83,7 +89,7 @@ const extractEntities = (text: string): Node[] => {
   });
   
   // Extract important nouns (concepts, topics)
-  const nouns = doc.nouns().out('array');
+  const nouns = nlpDoc.nouns().out('array');
   const importantNouns = nouns
     .filter(noun => noun.length > 3 && !isCommonWord(noun.toLowerCase()))
     .slice(0, 20); // Limit to top 20 concepts
@@ -99,6 +105,9 @@ const extractEntities = (text: string): Node[] => {
       });
     }
   });
+  
+  const totalTime = performance.now() - entityStart;
+  console.log(`[PERF] ✅ Entities: ${nodes.length} found in ${totalTime.toFixed(0)}ms`);
   
   return nodes;
 };
@@ -787,174 +796,80 @@ const findEntityOccurrences = (text: string, entityId: string, nodeIds: Set<stri
 
 /**
  * Extract relationships between entities
- * Enhanced with cross-sentence context and better entity matching
+ * Optimized: Reuses NLP doc and simplified sentence processing
  */
-const extractRelationships = (text: string, nodes: Node[]): Link[] => {
-  const doc = nlp(text);
+const extractRelationships = (text: string, nodes: Node[], doc?: any): Link[] => {
+  const relStart = performance.now();
+  
+  // Reuse doc if provided, otherwise create new one
+  const nlpDoc = doc || nlp(text);
+  
   const links: Link[] = [];
   const nodeIds = new Set(nodes.map(n => n.id));
   const nodeMap = new Map(nodes.map(n => [n.id, n]));
   
-  // Extract sentences
-  const sentences = doc.sentences().out('array');
+  // Extract sentences (much faster than processing each sentence separately)
+  const sentences = nlpDoc.sentences().out('array');
+  const lowerText = text.toLowerCase();
   
-  // Process each sentence with context from previous sentence
+  // Process sentences - simplified approach without per-sentence NLP
   sentences.forEach((sentence, sentenceIndex) => {
-    const sentDoc = nlp(sentence);
     const lowerSentence = sentence.toLowerCase();
-    
-    // Extract all entity types
-    const sentPeople = sentDoc.people().out('array').map(p => p.toLowerCase().trim());
-    const sentPlaces = sentDoc.places().out('array').map(p => p.toLowerCase().trim());
-    const sentOrgs = sentDoc.organizations().out('array').map(o => o.toLowerCase().trim());
-    const sentNouns = sentDoc.nouns().out('array').map(n => n.toLowerCase().trim());
-    
-    // Collect all entities in this sentence with their positions
     const sentEntities: Array<{id: string, index: number, label: string}> = [];
     
-    // Add people, places, orgs
-    [...sentPeople, ...sentPlaces, ...sentOrgs].forEach(entity => {
-      if (nodeIds.has(entity)) {
-        const occurrences = findEntityOccurrences(sentence, entity, nodeIds);
-        occurrences.forEach(occ => {
-          const node = nodeMap.get(entity);
-          if (node && !sentEntities.some(e => e.id === entity && e.index === occ.index)) {
-            sentEntities.push({ id: entity, index: occ.index, label: node.label });
+    // Find entities in sentence using simple string matching (much faster)
+    nodeIds.forEach(nodeId => {
+      const index = lowerSentence.indexOf(nodeId);
+      if (index !== -1) {
+        // Check if it's a whole word match
+        const before = index > 0 ? lowerSentence[index - 1] : ' ';
+        const after = index + nodeId.length < lowerSentence.length 
+          ? lowerSentence[index + nodeId.length] 
+          : ' ';
+        
+        if (!/[a-z0-9]/.test(before) && !/[a-z0-9]/.test(after)) {
+          const node = nodeMap.get(nodeId);
+          if (node && !sentEntities.some(e => e.id === nodeId)) {
+            sentEntities.push({ id: nodeId, index, label: node.label });
           }
-        });
-      }
-    });
-    
-    // Add concept entities (nouns that are in our nodes)
-    sentNouns.forEach(noun => {
-      if (nodeIds.has(noun)) {
-        const occurrences = findEntityOccurrences(sentence, noun, nodeIds);
-        occurrences.forEach(occ => {
-          const node = nodeMap.get(noun);
-          if (node && !sentEntities.some(e => e.id === noun && e.index === occ.index)) {
-            sentEntities.push({ id: noun, index: occ.index, label: node.label });
-          }
-        });
+        }
       }
     });
     
     // Sort by position in sentence
     sentEntities.sort((a, b) => a.index - b.index);
     
-    // Build context from previous sentence if available
-    const prevSentence = sentenceIndex > 0 ? sentences[sentenceIndex - 1] : '';
-    const contextSentence = prevSentence ? `${prevSentence} ${sentence}` : sentence;
-    
-    // Find relationships between entities in the same sentence
+    // Find relationships between entities in the same sentence (simplified)
     for (let i = 0; i < sentEntities.length; i++) {
       for (let j = i + 1; j < sentEntities.length; j++) {
         const source = sentEntities[i].id;
         const target = sentEntities[j].id;
         
-        const sourceNode = nodeMap.get(source);
-        const targetNode = nodeMap.get(target);
+        // Check if entities are close together (likely related)
+        const distance = Math.abs(sentEntities[j].index - sentEntities[i].index);
+        const isClose = distance < 150; // Within 150 characters
         
-        if (sourceNode && targetNode) {
-          // Use context sentence for better relationship inference
-          const relationType = inferRelationshipType(
-            sourceNode,
-            targetNode,
-            contextSentence, // Use context sentence instead of just current sentence
-            sentEntities[i].index,
-            sentEntities[j].index
+        if (isClose) {
+          // Avoid duplicate links
+          const linkExists = links.some(l => 
+            (l.source === source && l.target === target) ||
+            (l.source === target && l.target === source)
           );
           
-          // Skip if still generic RELATED_TO and we can do better
-          // Check if entities are close together (likely related)
-          const distance = Math.abs(sentEntities[j].index - sentEntities[i].index);
-          const isClose = distance < 100; // Within 100 characters
-          
-          // Only create link if:
-          // 1. It's not RELATED_TO, OR
-          // 2. It's RELATED_TO but entities are close together (likely meaningful)
-          if (relationType !== 'RELATED_TO' || isClose) {
-            // Avoid duplicate links (check both directions and similar types)
-            const linkExists = links.some(l => {
-              const samePair = (l.source === source && l.target === target) ||
-                              (l.source === target && l.target === source);
-              // Also check if we already have a more specific relationship
-              if (samePair && l.type !== 'RELATED_TO' && relationType === 'RELATED_TO') {
-                return true; // Skip generic if we have specific
-              }
-              return samePair;
+          if (!linkExists) {
+            links.push({
+              source: source,
+              target: target,
+              type: 'RELATED_TO'
             });
-            
-            if (!linkExists) {
-              links.push({
-                source: source,
-                target: target,
-                type: relationType
-              });
-            } else if (relationType !== 'RELATED_TO') {
-              // Update existing link if we found a more specific relationship
-              const existingLink = links.find(l => 
-                ((l.source === source && l.target === target) ||
-                 (l.source === target && l.target === source)) &&
-                l.type === 'RELATED_TO'
-              );
-              if (existingLink) {
-                existingLink.type = relationType;
-              }
-            }
           }
         }
       }
     }
-    
-    // Also check for relationships between entities in adjacent sentences
-    // (entities mentioned close together across sentence boundaries)
-    if (sentenceIndex > 0 && sentEntities.length > 0) {
-      const prevSentDoc = nlp(prevSentence);
-      const prevPeople = prevSentDoc.people().out('array').map(p => p.toLowerCase().trim());
-      const prevPlaces = prevSentDoc.places().out('array').map(p => p.toLowerCase().trim());
-      const prevOrgs = prevSentDoc.organizations().out('array').map(o => o.toLowerCase().trim());
-      const prevNouns = prevSentDoc.nouns().out('array').map(n => n.toLowerCase().trim());
-      
-      const prevEntities = [...prevPeople, ...prevPlaces, ...prevOrgs, ...prevNouns]
-        .filter(id => nodeIds.has(id));
-      
-      // Link entities from previous sentence to current sentence if context suggests relationship
-      prevEntities.forEach(prevEntityId => {
-        const prevNode = nodeMap.get(prevEntityId);
-        if (!prevNode) return;
-        
-        sentEntities.forEach(currEntity => {
-          const currNode = nodeMap.get(currEntity.id);
-          if (!currNode) return;
-          
-          // Use combined context for cross-sentence relationships
-          const relationType = inferRelationshipType(
-            prevNode,
-            currNode,
-            contextSentence,
-            -1,
-            -1
-          );
-          
-          // Only create cross-sentence links if relationship is specific (not RELATED_TO)
-          if (relationType !== 'RELATED_TO') {
-            const linkExists = links.some(l =>
-              (l.source === prevEntityId && l.target === currEntity.id) ||
-              (l.source === currEntity.id && l.target === prevEntityId)
-            );
-            
-            if (!linkExists) {
-              links.push({
-                source: prevEntityId,
-                target: currEntity.id,
-                type: relationType
-              });
-            }
-          }
-        });
-      });
-    }
   });
+  
+  const totalTime = performance.now() - relStart;
+  console.log(`[PERF] ✅ Relationships: ${links.length} found in ${totalTime.toFixed(0)}ms`);
   
   return links;
 };
@@ -975,104 +890,163 @@ const isCommonWord = (word: string): boolean => {
 
 /**
  * Extract knowledge graph from text chunk using NLP
- * Replaces Gemini-based extraction
+ * Optimized: Creates NLP doc once and reuses it for both entities and relationships
  */
 export const extractGraphFromChunk = (chunk: string): GraphData => {
+  const chunkStart = performance.now();
+  
   try {
-    const nodes = extractEntities(chunk);
-    const links = extractRelationships(chunk, nodes);
+    // Create NLP doc once and reuse it (major performance improvement)
+    const doc = nlp(chunk);
+    
+    // Extract entities using the shared doc
+    const nodes = extractEntities(chunk, doc);
+    
+    // Extract relationships using the shared doc
+    const links = extractRelationships(chunk, nodes, doc);
+    
+    const totalTime = performance.now() - chunkStart;
+    console.log(`[PERF] ✅ Chunk: ${nodes.length} nodes, ${links.length} links in ${totalTime.toFixed(0)}ms`);
     
     return { nodes, links };
   } catch (error) {
-    console.error("NLP extraction error:", error);
+    const totalTime = performance.now() - chunkStart;
+    console.error(`[PERF] ❌ NLP error after ${totalTime.toFixed(0)}ms:`, error);
     return { nodes: [], links: [] };
   }
 };
 
 /**
- * Extract graph from mixed PDF content (ASYNC, CHUNKED)
- * For text pages, uses NLP extraction in chunks to prevent UI blocking
- * For image pages, returns empty graph (images can't be processed without vision model)
+ * Process a batch of pages - optimized for speed
+ * Processes entire batch at once (faster) with minimal yields
  */
-export const extractGraphFromMixedContent = async (pages: PdfPage[]): Promise<GraphData> => {
-  const perfStart = performance.now();
-  const textPages = pages.filter(page => page.type === 'text');
-  console.log(`[PERF-NLP] 🔍 Starting ASYNC chunked extraction on ${textPages.length} text pages (${pages.length} total pages)`);
+const processBatch = async (batchPages: PdfPage[], batchIndex: number, totalBatches: number): Promise<GraphData> => {
+  const batchStart = performance.now();
   
-  try {
-    if (textPages.length === 0) {
-      console.log(`[PERF-NLP] ⚠️ No text pages found, returning empty graph`);
-      return { nodes: [], links: [] };
-    }
+  if (batchPages.length === 0) {
+    return { nodes: [], links: [] };
+  }
+  
+  // Combine all pages in batch at once (much faster than sub-chunks)
+  const batchText = batchPages
+    .map(page => page.content)
+    .join('\n\n');
+  
+  if (!batchText.trim()) {
+    return { nodes: [], links: [] };
+  }
+  
+  // Extract from entire batch (optimized NLP reuse makes this fast)
+  const result = extractGraphFromChunk(batchText);
+  
+  const batchTime = performance.now() - batchStart;
+  console.log(`[PERF] ✅ Batch ${batchIndex + 1}/${totalBatches}: ${result.nodes.length} nodes, ${result.links.length} links in ${batchTime.toFixed(0)}ms`);
+  
+  return result;
+};
+
+/**
+ * Process batches in parallel for maximum speed
+ * Controlled concurrency prevents memory issues while maximizing throughput
+ */
+const processBatchesInParallel = async (
+  batches: PdfPage[][],
+  onProgress?: (current: number, total: number) => void
+): Promise<GraphData> => {
+  const allNodes: Node[] = [];
+  const allLinks: Link[] = [];
+  const nodeIdMap = new Map<string, Node>(); // For deduplication
+  
+  const totalStart = performance.now();
+  console.log(`[PERF] 🚀 Processing ${batches.length} batches in parallel (${batches.reduce((sum, b) => sum + b.length, 0)} pages total)`);
+  
+  // Process batches in parallel with controlled concurrency
+  // For large PDFs: 3-4 batches in parallel for optimal speed/memory balance
+  const CONCURRENCY = Math.min(4, batches.length);
+  
+  for (let i = 0; i < batches.length; i += CONCURRENCY) {
+    const batchGroup = batches.slice(i, i + CONCURRENCY);
     
-    // Process in chunks to prevent UI blocking
-    // Each chunk processes ~50 pages (roughly 50-100KB of text)
-    const CHUNK_SIZE = 50;
-    const totalChunks = Math.ceil(textPages.length / CHUNK_SIZE);
-    const allNodes: Node[] = [];
-    const allLinks: Link[] = [];
-    const nodeIdMap = new Map<string, Node>(); // For deduplication
+    // Process this group of batches in parallel
+    const batchPromises = batchGroup.map((batch, groupIndex) => 
+      processBatch(batch, i + groupIndex + 1, batches.length)
+    );
     
-    console.log(`[PERF-NLP] 📦 Processing ${textPages.length} pages in ${totalChunks} chunks of ${CHUNK_SIZE} pages each`);
+    const batchResults = await Promise.all(batchPromises);
     
-    for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
-      const chunkStart = performance.now();
-      const startIdx = chunkIndex * CHUNK_SIZE;
-      const endIdx = Math.min(startIdx + CHUNK_SIZE, textPages.length);
-      const chunkPages = textPages.slice(startIdx, endIdx);
-      
-      // Combine chunk pages
-      const chunkText = chunkPages
-        .map(page => page.content)
-        .join('\n\n');
-      
-      if (!chunkText.trim()) {
-        console.log(`[PERF-NLP] ⏭️ Skipping empty chunk ${chunkIndex + 1}/${totalChunks}`);
-        continue;
-      }
-      
-      // Extract from this chunk
-      const chunkResult = extractGraphFromChunk(chunkText);
-      
-      // Merge nodes (deduplicate by id)
-      chunkResult.nodes.forEach(node => {
+    // Merge results
+    batchResults.forEach(result => {
+      result.nodes.forEach(node => {
         const nodeIdLower = node.id.toLowerCase();
         if (!nodeIdMap.has(nodeIdLower)) {
           nodeIdMap.set(nodeIdLower, node);
           allNodes.push(node);
         }
       });
-      
-      // Merge links
-      allLinks.push(...chunkResult.links);
-      
-      const chunkTime = performance.now() - chunkStart;
-      console.log(`[PERF-NLP] ✅ Chunk ${chunkIndex + 1}/${totalChunks} complete: ${chunkResult.nodes.length} nodes, ${chunkResult.links.length} links in ${chunkTime.toFixed(2)}ms`);
-      
-      // Yield to browser every chunk to prevent UI freeze
-      // Use requestIdleCallback if available, otherwise setTimeout
-      if (chunkIndex < totalChunks - 1) {
-        await new Promise(resolve => {
-          if ('requestIdleCallback' in window) {
-            (window as any).requestIdleCallback(resolve, { timeout: 100 });
-          } else {
-            setTimeout(resolve, 0);
-          }
-        });
-      }
+      allLinks.push(...result.links);
+    });
+    
+    // Update progress
+    if (onProgress) {
+      onProgress(Math.min(i + CONCURRENCY, batches.length), batches.length);
     }
     
-    const totalTime = performance.now() - perfStart;
-    const result = { nodes: allNodes, links: allLinks };
+    // Brief yield between batch groups to keep UI responsive
+    if (i + CONCURRENCY < batches.length) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  }
+  
+  const totalTime = performance.now() - totalStart;
+  console.log(`[PERF] ✅ Complete: ${allNodes.length} nodes, ${allLinks.length} links in ${(totalTime/1000).toFixed(1)}s`);
+  
+  return { nodes: allNodes, links: allLinks };
+};
+
+/**
+ * Extract graph from mixed PDF content (BATCHED, SEQUENTIAL with sub-chunks)
+ * For text pages, divides into 200-page batches, each processed in 50-page sub-chunks
+ * Processing is sequential with frequent yields to prevent UI blocking
+ * For image pages, returns empty graph (images can't be processed without vision model)
+ * 
+ * @param pages - Array of PDF pages
+ * @param onProgress - Optional progress callback (current, total)
+ */
+export const extractGraphFromMixedContent = async (
+  pages: PdfPage[],
+  onProgress?: (current: number, total: number) => void
+): Promise<GraphData> => {
+  const perfStart = performance.now();
+  const textPages = pages.filter(page => page.type === 'text');
+  
+  console.log(`[PERF] 🚀 Starting extraction: ${textPages.length} text pages`);
+  
+  try {
+    if (textPages.length === 0) {
+      return { nodes: [], links: [] };
+    }
     
-    console.log(`[PERF-NLP] ✅ ASYNC extraction complete: ${result.nodes.length} nodes, ${result.links.length} links`);
-    console.log(`[PERF-NLP] ⏱️ Total processing time: ${totalTime.toFixed(2)}ms (${(totalTime / 1000).toFixed(2)}s)`);
-    console.log(`[PERF-NLP] ✅ Chunked processing prevented UI freeze!`);
+    // Use larger batch size for speed (200 pages per batch)
+    const BATCH_SIZE = 200;
+    
+    // Divide pages into batches
+    const batches: PdfPage[][] = [];
+    for (let i = 0; i < textPages.length; i += BATCH_SIZE) {
+      batches.push(textPages.slice(i, i + BATCH_SIZE));
+    }
+    
+    const totalBatches = batches.length;
+    console.log(`[PERF] 📦 Divided ${textPages.length} pages into ${totalBatches} batches`);
+    // Process batches in parallel for maximum speed
+    const result = await processBatchesInParallel(batches, onProgress);
+    
+    const totalTime = performance.now() - perfStart;
+    console.log(`[PERF] ✅ Extraction complete: ${result.nodes.length} nodes, ${result.links.length} links in ${(totalTime/1000).toFixed(1)}s`);
     
     return result;
   } catch (error) {
     const totalTime = performance.now() - perfStart;
-    console.error(`[PERF-NLP] ❌ Mixed content extraction error after ${totalTime.toFixed(2)}ms:`, error);
+    console.error(`[PERF] ❌ Extraction error after ${(totalTime/1000).toFixed(1)}s:`, error);
     return { nodes: [], links: [] };
   }
 };

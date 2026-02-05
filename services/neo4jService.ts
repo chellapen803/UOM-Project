@@ -119,18 +119,17 @@ export async function loadGraphFromNeo4j(): Promise<GraphDataResponse> {
 
 /**
  * Save document to Neo4j
- * Includes timeout handling for large documents
+ * Optimized for Vercel: smaller batches + parallel processing
  */
 export async function saveDocumentToNeo4j(
   docId: string,
   docName: string,
   chunks: Array<{ id: string; text: string; sourceDoc: string }>,
   entityIds?: string[],
-  timeout: number = 300000 // 5 minutes default timeout
+  timeout: number = 60000 // Reduced to 60s per batch (Vercel Pro limit)
 ): Promise<SaveDocumentResponse> {
-  // To avoid Vercel/Lambda timeouts and very large request bodies with huge PDFs,
-  // we batch the chunks and send multiple smaller requests.
-  const BATCH_SIZE = 200;
+  // Smaller batch size for faster individual saves (fits within Vercel timeout)
+  const BATCH_SIZE = 100; // Reduced from 200 to 100 for faster saves
   const isDev = import.meta.env.DEV;
 
   // Helper to post a single batch of chunks
@@ -207,14 +206,26 @@ export async function saveDocumentToNeo4j(
     return postBatch(chunks, 0, 1);
   }
 
-  // For very large documents, split into batches and send sequentially.
-  // This keeps each request/body small enough for Vercel and avoids long-running functions.
+  // For very large documents, split into batches and send in parallel (3 at a time)
+  // This dramatically reduces total save time while staying within Vercel limits
   const totalBatches = Math.ceil(chunks.length / BATCH_SIZE);
-  for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
-    const start = batchIndex * BATCH_SIZE;
-    const end = Math.min(start + BATCH_SIZE, chunks.length);
-    const batchChunks = chunks.slice(start, end);
-    await postBatch(batchChunks, batchIndex, totalBatches);
+  const CONCURRENCY = 3; // Process 3 batches in parallel
+  
+  const batches: Array<{ id: string; text: string; sourceDoc: string }>[] = [];
+  for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+    batches.push(chunks.slice(i, i + BATCH_SIZE));
+  }
+
+  // Process batches in parallel with controlled concurrency
+  for (let i = 0; i < batches.length; i += CONCURRENCY) {
+    const batchGroup = batches.slice(i, i + CONCURRENCY);
+    
+    // Process this group of batches in parallel
+    const batchPromises = batchGroup.map((batchChunks, groupIndex) => 
+      postBatch(batchChunks, i + groupIndex + 1, totalBatches)
+    );
+    
+    await Promise.all(batchPromises);
   }
 
   // If all batches succeeded, we treat the document as successfully saved.

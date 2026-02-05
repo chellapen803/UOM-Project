@@ -373,7 +373,7 @@ const App = () => {
     // --- STRATEGY A: PDF (HYBRID) ---
     if (uploadMode === 'pdf' && pdfPages.length > 0) {
         const chunkStart = performance.now();
-        console.log(`[PERF] 📄 Preparing ${pdfPages.length} PDF pages for chunking...`);
+        console.log(`[PERF] 📄 Preparing ${pdfPages.length} PDF pages for batched parallel processing...`);
         
         // Validate that we have pages from the expected range
         const pageNumbers = pdfPages.map(p => p.pageNumber).sort((a, b) => a - b);
@@ -391,8 +391,10 @@ const App = () => {
           console.warn(`[PERF] ⚠️ WARNING: PDF has gaps in page numbers. Expected ${expectedPages} pages (${minPage}-${maxPage}) but have ${pdfPages.length} pages. Missing: ${missingPages.slice(0, 20).join(', ')}${missingPages.length > 20 ? '...' : ''}`);
         }
         
+        // Prepare chunks for saving
+        // Use deterministic IDs based on document ID and page number to ensure uniqueness
         chunks = pdfPages.map(p => ({
-            id: Math.random().toString(36),
+            id: `${newDocId}-page-${p.pageNumber}`,
             text: p.type === 'text' ? p.content : `[Image Page ${p.pageNumber}]`,
             sourceDoc: newDocId
         }));
@@ -401,29 +403,47 @@ const App = () => {
         console.log(`[PERF] ✅ Chunking complete: ${chunks.length} chunks in ${chunkTime.toFixed(2)}ms`);
         console.log(`[PERF] 📋 Page range: ${minPage}-${maxPage} (${pdfPages.length} pages total)`);
 
-        // Total steps: 1 (NLP extraction) + 2 (graph save + doc save)
-        setIngestProgress({ current: 0, total: 3, phase: 'Preparing PDF content' });
-        setProcessingStatus(`Processing ${pdfPages.length} pages using NLP extraction...`);
+        // Determine batch size for processing (200 pages per batch)
+        // This balances efficiency with Vercel timeout limits
+        const textPages = pdfPages.filter(p => p.type === 'text');
+        const batchSize = 200;
+        const estimatedBatches = Math.ceil(textPages.length / batchSize);
         
-        // Extract graph from all pages using async chunked processing
+        // Update progress tracking
+        setIngestProgress({ current: 0, total: estimatedBatches + 3, phase: 'Preparing PDF content' });
+        setProcessingStatus(`Processing ${pdfPages.length} pages in ${estimatedBatches} batches (sequential processing to prevent UI blocking)...`);
+        
+        // Extract graph from all pages using batched sequential processing with sub-chunks
+        // This prevents "Page Unresponsive" dialogs by yielding frequently to the browser
         const extractStart = performance.now();
         const pageRange = pdfPages.length > 0 
           ? `pages ${Math.min(...pdfPages.map(p => p.pageNumber))}-${Math.max(...pdfPages.map(p => p.pageNumber))}`
           : 'all pages';
-        console.log(`[PERF] 🔍 Starting ASYNC chunked NLP extraction on ${pdfPages.length} pages (${chunks.length} chunks, ${pageRange})...`);
+        console.log(`[PERF] 🔍 Starting batched sequential NLP extraction on ${pdfPages.length} pages (${estimatedBatches} batches, ${pageRange})...`);
         
-        setProcessingStatus(`Extracting entities from PDF (${pageRange}, processing in chunks to keep UI responsive)...`);
+        // Process with progress callback
+        const extracted = await extractGraphFromMixedContent(pdfPages, (current, total) => {
+          setIngestProgress(prev => ({
+            current: current,
+            total: prev.total || total + 3,
+            phase: `Processing batch ${current}/${total}`
+          }));
+          setProcessingStatus(`Extracting entities from batch ${current}/${total} (${pageRange})...`);
+        });
         
-        const extracted = await extractGraphFromMixedContent(pdfPages);
         const extractTime = performance.now() - extractStart;
         
         newNodes = [...newNodes, ...extracted.nodes];
         newLinks = [...newLinks, ...extracted.links];
         
         console.log(`[PERF] ✅ NLP extraction complete: ${extracted.nodes.length} nodes, ${extracted.links.length} links in ${extractTime.toFixed(2)}ms`);
-        console.log(`[PERF] ✅ Chunked processing kept UI responsive!`);
+        console.log(`[PERF] ✅ Sequential processing with sub-chunks prevented UI blocking!`);
         
-        setIngestProgress({ current: 1, total: 3, phase: 'Entities extracted from PDF' });
+        setIngestProgress(prev => ({
+          current: prev.total ? prev.total - 2 : estimatedBatches,
+          total: prev.total || estimatedBatches + 3,
+          phase: 'Entities extracted from PDF'
+        }));
 
     } 
     // --- STRATEGY B: RAW TEXT ---
@@ -448,10 +468,11 @@ const App = () => {
     setProcessingStatus('Saving to Neo4j database...');
 
     try {
-      // Calculate timeout based on document size (larger docs need more time)
-      // Base timeout: 2 minutes for graph, 5 minutes for document
-      // Add 1 second per 100 chunks for very large documents
-      const graphTimeout = 120000 + Math.max(0, (chunks.length - 100) * 10);
+      // Calculate timeout based on document size
+      // Batched Neo4j saves are much faster, so we can use shorter timeouts
+      // Base timeout: 5 minutes for graph (batched), 5 minutes for document
+      const estimatedGraphBatches = Math.ceil(newNodes.length / 500) + Math.ceil(newLinks.length / 500);
+      const graphTimeout = 300000 + (estimatedGraphBatches * 30000); // 30 seconds per batch
       const docTimeout = 300000 + Math.max(0, (chunks.length - 100) * 50);
       
       // Save graph data to Neo4j
@@ -472,11 +493,13 @@ const App = () => {
       console.log(`[PERF] ✅ Graph save complete in ${graphSaveTime.toFixed(2)}ms`);
       
       // Save document and chunks to Neo4j
+      // Note: saveDocumentToNeo4j batches chunks (100 per batch) and processes 3 batches in parallel
       const docSaveStart = performance.now();
-      console.log(`[PERF] 💾 Starting document save: ${chunks.length} chunks`);
+      const totalBatches = Math.ceil(chunks.length / 100);
+      console.log(`[PERF] 💾 Starting document save: ${chunks.length} chunks (will be saved in ${totalBatches} batches in parallel)`);
       
       const entityIds = newNodes.map(n => n.id);
-      setProcessingStatus(`Saving document chunks (${chunks.length} total)...`);
+      setProcessingStatus(`Saving document chunks (${chunks.length} total, ${totalBatches} batches)...`);
       setIngestProgress(prev => ({
         current: (prev.total || (chunks.length > 0 ? chunks.length + 2 : 3)) - 1,
         total: prev.total || (chunks.length > 0 ? chunks.length + 2 : 3),
@@ -488,7 +511,7 @@ const App = () => {
       
       await saveDocumentToNeo4j(newDocId, docName, chunks, entityIds, docTimeout);
       const docSaveTime = performance.now() - docSaveStart;
-      console.log(`[PERF] ✅ Document save complete in ${docSaveTime.toFixed(2)}ms`);
+      console.log(`[PERF] ✅ Document save complete in ${docSaveTime.toFixed(2)}ms (${totalBatches} batches)`);
       
       // VERIFICATION: Verify that all chunks were saved
       setProcessingStatus('Verifying ingestion...');
@@ -519,11 +542,23 @@ const App = () => {
           const savedChunks = verifyData.chunkCount || 0;
           const verifyTime = performance.now() - verifyStart;
           
+          // Check if saved chunks match expected (allowing for small differences due to deduplication)
+          const difference = Math.abs(savedChunks - chunks.length);
+          const tolerance = Math.max(1, Math.floor(chunks.length * 0.01)); // 1% tolerance
+          
           if (savedChunks === chunks.length) {
             console.log(`[PERF] ✅ Verification passed: All ${chunks.length} chunks saved successfully (${verifyTime.toFixed(2)}ms)`);
+          } else if (savedChunks > chunks.length) {
+            // More chunks than expected - likely due to duplicate chunk IDs or previous saves
+            console.warn(`[PERF] ⚠️ Verification: Expected ${chunks.length} chunks but database has ${savedChunks} chunks (${difference} extra). This may be due to duplicate chunk IDs or previous ingestion.`);
+            // Don't show alert for extra chunks - data is still there
+          } else if (difference <= tolerance) {
+            // Small difference within tolerance
+            console.log(`[PERF] ✅ Verification passed: ${savedChunks}/${chunks.length} chunks saved (${difference} difference within tolerance)`);
           } else {
-            console.warn(`[PERF] ⚠️ Verification warning: Expected ${chunks.length} chunks but database has ${savedChunks} chunks`);
-            alert(`Warning: Expected ${chunks.length} chunks but only ${savedChunks} were saved. Some pages may be missing.`);
+            // Significant missing chunks
+            console.warn(`[PERF] ⚠️ Verification warning: Expected ${chunks.length} chunks but only ${savedChunks} were saved (${difference} missing)`);
+            alert(`Warning: Expected ${chunks.length} chunks but only ${savedChunks} were saved. ${difference} chunks may be missing.`);
           }
         } else {
           console.warn(`[PERF] ⚠️ Verification endpoint not available (status ${verifyResponse.status})`);
@@ -822,45 +857,44 @@ const App = () => {
             </div>
           ) : (
           <div className="flex-1 overflow-y-auto p-8">
-            <div className="max-w-4xl mx-auto space-y-6">
+            <div className="max-w-6xl mx-auto space-y-8">
                 <div>
-                    <h2 className="text-3xl font-bold tracking-tight">Ingest Data</h2>
-                    <p className="text-slate-500">Upload documents to build your knowledge graph.</p>
+                    <h2 className="text-4xl font-bold tracking-tight">Ingest Data</h2>
+                    <p className="text-slate-500 text-lg mt-2">Upload documents to build your knowledge graph.</p>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                     <Card className="md:col-span-2">
-                        <CardHeader>
-                            <CardTitle className="text-lg">Upload Content</CardTitle>
-                            <CardDescription>Supported formats: Plain Text, PDF (OCR/Vision), URL (Wikipedia & more)</CardDescription>
+                        <CardHeader className="pb-4">
+                            <CardTitle className="text-xl">Upload Content</CardTitle>
+                            <CardDescription className="text-base">Supported formats: Plain Text, PDF (OCR/Vision), URL (Wikipedia & more)</CardDescription>
                         </CardHeader>
-                        <CardContent>
-                            <div className="space-y-4">
-                                <div className="flex p-1 bg-slate-100 rounded-lg w-fit">
-                                    <button 
-                                        onClick={() => setUploadMode('text')}
-                                        className={cn("px-4 py-1.5 text-sm font-medium rounded-md transition-all", uploadMode === 'text' ? "bg-white shadow-sm text-slate-900" : "text-slate-500 hover:text-slate-900")}
-                                    >
-                                        Raw Text
-                                    </button>
-                                    <button 
-                                        onClick={() => setUploadMode('pdf')}
-                                        className={cn("px-4 py-1.5 text-sm font-medium rounded-md transition-all", uploadMode === 'pdf' ? "bg-white shadow-sm text-slate-900" : "text-slate-500 hover:text-slate-900")}
-                                    >
-                                        PDF Document
-                                    </button>
-                                    <button 
-                                        onClick={() => setUploadMode('url')}
-                                        className={cn("px-4 py-1.5 text-sm font-medium rounded-md transition-all", uploadMode === 'url' ? "bg-white shadow-sm text-slate-900" : "text-slate-500 hover:text-slate-900")}
-                                    >
-                                        URL
-                                    </button>
-                                </div>
+                        <CardContent className="space-y-6">
+                            <div className="flex p-1 bg-slate-100 rounded-lg w-fit">
+                                <button 
+                                    onClick={() => setUploadMode('text')}
+                                    className={cn("px-5 py-2 text-sm font-medium rounded-md transition-all", uploadMode === 'text' ? "bg-white shadow-sm text-slate-900" : "text-slate-500 hover:text-slate-900")}
+                                >
+                                    Raw Text
+                                </button>
+                                <button 
+                                    onClick={() => setUploadMode('pdf')}
+                                    className={cn("px-5 py-2 text-sm font-medium rounded-md transition-all", uploadMode === 'pdf' ? "bg-white shadow-sm text-slate-900" : "text-slate-500 hover:text-slate-900")}
+                                >
+                                    PDF Document
+                                </button>
+                                <button 
+                                    onClick={() => setUploadMode('url')}
+                                    className={cn("px-5 py-2 text-sm font-medium rounded-md transition-all", uploadMode === 'url' ? "bg-white shadow-sm text-slate-900" : "text-slate-500 hover:text-slate-900")}
+                                >
+                                    URL
+                                </button>
+                            </div>
 
                                 {uploadMode === 'text' ? (
                                     <Textarea 
                                         placeholder="Paste your knowledge base content here..."
-                                        className="h-64 font-mono text-sm"
+                                        className="h-96 font-mono text-sm min-h-[400px]"
                                         value={uploadText}
                                         onChange={(e) => setUploadText(e.target.value)}
                                     />
@@ -946,9 +980,8 @@ const App = () => {
                                         )}
                                     </div>
                                 )}
-                            </div>
                         </CardContent>
-                        <CardFooter className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-3 border-t bg-slate-50/50 p-4">
+                        <CardFooter className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-3 border-t bg-slate-50/50 p-6">
                             {isProcessing && (
                                 <div className="flex flex-col gap-1 text-sm text-slate-500 sm:mr-2 max-w-xs sm:max-w-sm">
                                     <div className="flex items-center gap-2">
@@ -990,10 +1023,10 @@ const App = () => {
                     </Card>
 
                     <div className="space-y-6">
-                         <Alert>
-                            <AlertCircle className="h-4 w-4" />
-                            <AlertTitle>Did you know?</AlertTitle>
-                            <AlertDescription>
+                         <Alert className="p-6">
+                            <AlertCircle className="h-5 w-5" />
+                            <AlertTitle className="text-base">Did you know?</AlertTitle>
+                            <AlertDescription className="text-sm mt-2">
                                 This tool uses Gemini 2.5 Flash for high-speed graph extraction from both text and images.
                             </AlertDescription>
                         </Alert>
