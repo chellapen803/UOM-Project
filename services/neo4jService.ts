@@ -138,12 +138,6 @@ export async function saveDocumentToNeo4j(
     batchIndex: number,
     totalBatches: number
   ): Promise<SaveDocumentResponse> => {
-    if (isDev) {
-      console.log(
-        `[Frontend] Saving document batch ${batchIndex + 1}/${totalBatches}: ` +
-          `${docName} (${batchChunks.length} chunks in this batch)`
-      );
-    }
 
     const headers = await getAuthHeaders();
 
@@ -176,13 +170,6 @@ export async function saveDocumentToNeo4j(
       }
 
       const result = await response.json();
-
-      if (isDev) {
-        console.log(
-          `[Frontend] Document batch ${batchIndex + 1}/${totalBatches} saved (${duration}ms)`
-        );
-      }
-
       return result;
     } catch (error: any) {
       clearTimeout(timeoutId);
@@ -364,11 +351,7 @@ export async function loadDocumentsFromNeo4j(): Promise<DocumentResponse[]> {
     // Log warning if any documents have 0 chunks
     const docsWithNoChunks = documents.filter((d: DocumentResponse) => (d.chunkCount || 0) === 0);
     if (docsWithNoChunks.length > 0) {
-      console.warn(`[Frontend] Warning: ${docsWithNoChunks.length} document(s) have 0 chunks`);
-    }
-    
-    if (isDev && documents.length > 0) {
-      console.log(`[Frontend] Loaded ${documents.length} document(s)`);
+      console.warn(`Warning: ${docsWithNoChunks.length} document(s) have 0 chunks`);
     }
     
     return documents;

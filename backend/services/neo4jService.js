@@ -27,8 +27,6 @@ export async function saveGraphData(nodes, links) {
       
       // Process each label in batches
       for (const [label, labelNodes] of Object.entries(nodesByLabel)) {
-        console.log(`[Neo4j] Saving ${labelNodes.length} ${label} nodes in batches of ${BATCH_SIZE}...`);
-        
         // Process nodes in batches
         for (let i = 0; i < labelNodes.length; i += BATCH_SIZE) {
           const batch = labelNodes.slice(i, i + BATCH_SIZE);
@@ -49,7 +47,6 @@ export async function saveGraphData(nodes, links) {
           });
         }
       }
-      console.log(`[Neo4j] ✅ All nodes saved`);
     }
     
     // Step 2: Batch create relationships
@@ -69,8 +66,6 @@ export async function saveGraphData(nodes, links) {
       
       // Process each relationship type in batches
       for (const [relType, typeLinks] of Object.entries(linksByType)) {
-        console.log(`[Neo4j] Saving ${typeLinks.length} ${relType} relationships in batches of ${BATCH_SIZE}...`);
-        
         // Process links in batches
         for (let i = 0; i < typeLinks.length; i += BATCH_SIZE) {
           const batch = typeLinks.slice(i, i + BATCH_SIZE);
@@ -85,7 +80,6 @@ export async function saveGraphData(nodes, links) {
           });
         }
       }
-      console.log(`[Neo4j] ✅ All relationships saved`);
     }
     
     return { success: true, nodesCount: nodes.length, linksCount: links.length };
@@ -150,11 +144,6 @@ export async function getGraphData() {
  */
 export async function saveDocument(docId, docName, chunks) {
   const session = driver.session();
-  const isDev = process.env.NODE_ENV !== 'production';
-  
-  if (isDev) {
-    console.log(`[Neo4j] Saving document: ${docName} (${chunks.length} chunks)`);
-  }
   
   try {
     await session.executeWrite(async (tx) => {
@@ -201,14 +190,8 @@ export async function saveDocument(docId, docName, chunks) {
         // Don't warn if count differs - parallel batches may process overlapping chunks
         // The MERGE ensures no duplicates, so the final count will be correct
         // We'll verify the total count after all batches complete
-      } else {
-        console.warn(`[Neo4j] Warning: No chunks to save for document ${docId}`);
       }
     });
-    
-    if (isDev) {
-      console.log(`[Neo4j] Document saved successfully: ${docId}`);
-    }
     
     return { success: true };
   } catch (error) {
@@ -279,7 +262,6 @@ export async function saveQuizQuestions(questions) {
   const isDev = process.env.NODE_ENV !== 'production';
   
   if (isDev) {
-    console.log(`[Neo4j] Saving ${questions.length} quiz questions globally`);
   }
   
   try {
@@ -332,7 +314,6 @@ export async function saveQuizQuestions(questions) {
     });
     
     if (isDev) {
-      console.log(`[Neo4j] Quiz questions saved successfully`);
     }
     
     return { success: true, count: questions.length };
@@ -373,7 +354,6 @@ export async function getQuizQuestions() {
     });
     
     if (isDev) {
-      console.log(`[Neo4j] Retrieved ${result.length} quiz questions`);
     }
     
     return result;
@@ -441,9 +421,6 @@ export async function getDocuments() {
       console.warn(`[Neo4j] Warning: ${docsWithNoChunks.length} document(s) have 0 chunks`);
     }
     
-    if (isDev && documents.length > 0) {
-      console.log(`[Neo4j] Loaded ${documents.length} document(s)`);
-    }
     
     return documents;
   } catch (error) {
@@ -504,9 +481,6 @@ export async function getDocumentChunks(docId) {
     const minPage = pageNumbers.length > 0 ? pageNumbers[0] : null;
     const maxPage = pageNumbers.length > 0 ? pageNumbers[pageNumbers.length - 1] : null;
     
-    if (isDev) {
-      console.log(`[Neo4j] Document ${docId} verification: ${chunkCount} chunks, page range: ${minPage}-${maxPage}`);
-    }
     
     return {
       docId,

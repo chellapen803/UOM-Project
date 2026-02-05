@@ -106,9 +106,6 @@ const extractEntities = (text: string, doc?: any): Node[] => {
     }
   });
   
-  const totalTime = performance.now() - entityStart;
-  console.log(`[PERF] ✅ Entities: ${nodes.length} found in ${totalTime.toFixed(0)}ms`);
-  
   return nodes;
 };
 
@@ -868,9 +865,6 @@ const extractRelationships = (text: string, nodes: Node[], doc?: any): Link[] =>
     }
   });
   
-  const totalTime = performance.now() - relStart;
-  console.log(`[PERF] ✅ Relationships: ${links.length} found in ${totalTime.toFixed(0)}ms`);
-  
   return links;
 };
 
@@ -905,13 +899,9 @@ export const extractGraphFromChunk = (chunk: string): GraphData => {
     // Extract relationships using the shared doc
     const links = extractRelationships(chunk, nodes, doc);
     
-    const totalTime = performance.now() - chunkStart;
-    console.log(`[PERF] ✅ Chunk: ${nodes.length} nodes, ${links.length} links in ${totalTime.toFixed(0)}ms`);
-    
     return { nodes, links };
   } catch (error) {
-    const totalTime = performance.now() - chunkStart;
-    console.error(`[PERF] ❌ NLP error after ${totalTime.toFixed(0)}ms:`, error);
+    console.error('NLP extraction error:', error);
     return { nodes: [], links: [] };
   }
 };
@@ -939,9 +929,6 @@ const processBatch = async (batchPages: PdfPage[], batchIndex: number, totalBatc
   // Extract from entire batch (optimized NLP reuse makes this fast)
   const result = extractGraphFromChunk(batchText);
   
-  const batchTime = performance.now() - batchStart;
-  console.log(`[PERF] ✅ Batch ${batchIndex + 1}/${totalBatches}: ${result.nodes.length} nodes, ${result.links.length} links in ${batchTime.toFixed(0)}ms`);
-  
   return result;
 };
 
@@ -956,9 +943,6 @@ const processBatchesInParallel = async (
   const allNodes: Node[] = [];
   const allLinks: Link[] = [];
   const nodeIdMap = new Map<string, Node>(); // For deduplication
-  
-  const totalStart = performance.now();
-  console.log(`[PERF] 🚀 Processing ${batches.length} batches in parallel (${batches.reduce((sum, b) => sum + b.length, 0)} pages total)`);
   
   // Process batches in parallel with controlled concurrency
   // For large PDFs: 3-4 batches in parallel for optimal speed/memory balance
@@ -997,9 +981,6 @@ const processBatchesInParallel = async (
     }
   }
   
-  const totalTime = performance.now() - totalStart;
-  console.log(`[PERF] ✅ Complete: ${allNodes.length} nodes, ${allLinks.length} links in ${(totalTime/1000).toFixed(1)}s`);
-  
   return { nodes: allNodes, links: allLinks };
 };
 
@@ -1016,10 +997,7 @@ export const extractGraphFromMixedContent = async (
   pages: PdfPage[],
   onProgress?: (current: number, total: number) => void
 ): Promise<GraphData> => {
-  const perfStart = performance.now();
   const textPages = pages.filter(page => page.type === 'text');
-  
-  console.log(`[PERF] 🚀 Starting extraction: ${textPages.length} text pages`);
   
   try {
     if (textPages.length === 0) {
@@ -1035,18 +1013,12 @@ export const extractGraphFromMixedContent = async (
       batches.push(textPages.slice(i, i + BATCH_SIZE));
     }
     
-    const totalBatches = batches.length;
-    console.log(`[PERF] 📦 Divided ${textPages.length} pages into ${totalBatches} batches`);
     // Process batches in parallel for maximum speed
     const result = await processBatchesInParallel(batches, onProgress);
     
-    const totalTime = performance.now() - perfStart;
-    console.log(`[PERF] ✅ Extraction complete: ${result.nodes.length} nodes, ${result.links.length} links in ${(totalTime/1000).toFixed(1)}s`);
-    
     return result;
   } catch (error) {
-    const totalTime = performance.now() - perfStart;
-    console.error(`[PERF] ❌ Extraction error after ${(totalTime/1000).toFixed(1)}s:`, error);
+    console.error('Extraction error:', error);
     return { nodes: [], links: [] };
   }
 };

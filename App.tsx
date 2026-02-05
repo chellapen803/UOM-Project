@@ -337,9 +337,6 @@ const App = () => {
 
   // 2. UPLOAD & PROCESS
   const handleUpload = async () => {
-    const perfStart = performance.now();
-    console.log(`[PERF] 🚀 Starting ingestion at ${new Date().toISOString()}`);
-    
     if (!uploadText && pdfPages.length === 0 && uploadMode !== 'url') return;
     setIsProcessing(true);
     setProcessingStatus('Initializing ingestion...');
@@ -372,9 +369,6 @@ const App = () => {
 
     // --- STRATEGY A: PDF (HYBRID) ---
     if (uploadMode === 'pdf' && pdfPages.length > 0) {
-        const chunkStart = performance.now();
-        console.log(`[PERF] 📄 Preparing ${pdfPages.length} PDF pages for batched parallel processing...`);
-        
         // Validate that we have pages from the expected range
         const pageNumbers = pdfPages.map(p => p.pageNumber).sort((a, b) => a - b);
         const minPage = pageNumbers[0];
@@ -399,9 +393,6 @@ const App = () => {
             sourceDoc: newDocId
         }));
         
-        const chunkTime = performance.now() - chunkStart;
-        console.log(`[PERF] ✅ Chunking complete: ${chunks.length} chunks in ${chunkTime.toFixed(2)}ms`);
-        console.log(`[PERF] 📋 Page range: ${minPage}-${maxPage} (${pdfPages.length} pages total)`);
 
         // Determine batch size for processing (200 pages per batch)
         // This balances efficiency with Vercel timeout limits
@@ -419,7 +410,6 @@ const App = () => {
         const pageRange = pdfPages.length > 0 
           ? `pages ${Math.min(...pdfPages.map(p => p.pageNumber))}-${Math.max(...pdfPages.map(p => p.pageNumber))}`
           : 'all pages';
-        console.log(`[PERF] 🔍 Starting batched sequential NLP extraction on ${pdfPages.length} pages (${estimatedBatches} batches, ${pageRange})...`);
         
         // Process with progress callback
         const extracted = await extractGraphFromMixedContent(pdfPages, (current, total) => {
@@ -431,13 +421,8 @@ const App = () => {
           setProcessingStatus(`Extracting entities from batch ${current}/${total} (${pageRange})...`);
         });
         
-        const extractTime = performance.now() - extractStart;
-        
         newNodes = [...newNodes, ...extracted.nodes];
         newLinks = [...newLinks, ...extracted.links];
-        
-        console.log(`[PERF] ✅ NLP extraction complete: ${extracted.nodes.length} nodes, ${extracted.links.length} links in ${extractTime.toFixed(2)}ms`);
-        console.log(`[PERF] ✅ Sequential processing with sub-chunks prevented UI blocking!`);
         
         setIngestProgress(prev => ({
           current: prev.total ? prev.total - 2 : estimatedBatches,
@@ -476,9 +461,6 @@ const App = () => {
       const docTimeout = 300000 + Math.max(0, (chunks.length - 100) * 50);
       
       // Save graph data to Neo4j
-      const graphSaveStart = performance.now();
-      console.log(`[PERF] 💾 Starting graph save: ${newNodes.length} nodes, ${newLinks.length} links`);
-      
       setIngestProgress(prev => ({
         current: Math.max(prev.current, prev.total > 0 ? prev.total - 2 : 0),
         total: prev.total || (chunks.length > 0 ? chunks.length + 2 : 3),
@@ -489,14 +471,10 @@ const App = () => {
       await new Promise(resolve => setTimeout(resolve, 0));
       
       await saveGraphToNeo4j(newNodes, newLinks, graphTimeout);
-      const graphSaveTime = performance.now() - graphSaveStart;
-      console.log(`[PERF] ✅ Graph save complete in ${graphSaveTime.toFixed(2)}ms`);
       
       // Save document and chunks to Neo4j
       // Note: saveDocumentToNeo4j batches chunks (100 per batch) and processes 3 batches in parallel
-      const docSaveStart = performance.now();
       const totalBatches = Math.ceil(chunks.length / 100);
-      console.log(`[PERF] 💾 Starting document save: ${chunks.length} chunks (will be saved in ${totalBatches} batches in parallel)`);
       
       const entityIds = newNodes.map(n => n.id);
       setProcessingStatus(`Saving document chunks (${chunks.length} total, ${totalBatches} batches)...`);
@@ -510,8 +488,6 @@ const App = () => {
       await new Promise(resolve => setTimeout(resolve, 0));
       
       await saveDocumentToNeo4j(newDocId, docName, chunks, entityIds, docTimeout);
-      const docSaveTime = performance.now() - docSaveStart;
-      console.log(`[PERF] ✅ Document save complete in ${docSaveTime.toFixed(2)}ms (${totalBatches} batches)`);
       
       // VERIFICATION: Verify that all chunks were saved
       setProcessingStatus('Verifying ingestion...');
@@ -546,25 +522,13 @@ const App = () => {
           const difference = Math.abs(savedChunks - chunks.length);
           const tolerance = Math.max(1, Math.floor(chunks.length * 0.01)); // 1% tolerance
           
-          if (savedChunks === chunks.length) {
-            console.log(`[PERF] ✅ Verification passed: All ${chunks.length} chunks saved successfully (${verifyTime.toFixed(2)}ms)`);
-          } else if (savedChunks > chunks.length) {
-            // More chunks than expected - likely due to duplicate chunk IDs or previous saves
-            console.warn(`[PERF] ⚠️ Verification: Expected ${chunks.length} chunks but database has ${savedChunks} chunks (${difference} extra). This may be due to duplicate chunk IDs or previous ingestion.`);
-            // Don't show alert for extra chunks - data is still there
-          } else if (difference <= tolerance) {
-            // Small difference within tolerance
-            console.log(`[PERF] ✅ Verification passed: ${savedChunks}/${chunks.length} chunks saved (${difference} difference within tolerance)`);
-          } else {
-            // Significant missing chunks
-            console.warn(`[PERF] ⚠️ Verification warning: Expected ${chunks.length} chunks but only ${savedChunks} were saved (${difference} missing)`);
+          if (savedChunks < chunks.length && difference > tolerance) {
+            // Significant missing chunks - show warning
+            console.warn(`Verification: Expected ${chunks.length} chunks but only ${savedChunks} were saved (${difference} missing)`);
             alert(`Warning: Expected ${chunks.length} chunks but only ${savedChunks} were saved. ${difference} chunks may be missing.`);
           }
-        } else {
-          console.warn(`[PERF] ⚠️ Verification endpoint not available (status ${verifyResponse.status})`);
         }
       } catch (error) {
-        console.warn(`[PERF] ⚠️ Verification failed (endpoint may not exist):`, error);
         // Don't fail the whole ingestion if verification fails
       }
       
@@ -628,13 +592,8 @@ const App = () => {
         setProcessingStatus('');
       }
       
-      const totalTime = performance.now() - perfStart;
-      console.log(`[PERF] 🎉 Ingestion complete in ${totalTime.toFixed(2)}ms (${(totalTime / 1000).toFixed(2)}s)`);
-      console.log(`[PERF] 📊 Summary: ${chunks.length} chunks, ${newNodes.length} nodes, ${newLinks.length} links`);
       
     } catch (error: any) {
-      const totalTime = performance.now() - perfStart;
-      console.error(`[PERF] ❌ Ingestion failed after ${totalTime.toFixed(2)}ms:`, error);
       console.error('[App] Error saving to Neo4j:', error);
       setIsProcessing(false);
       setProcessingStatus('');
