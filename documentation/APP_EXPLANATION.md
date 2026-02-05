@@ -53,6 +53,7 @@ Backend API (Vercel Serverless)
 - **Options**:
   - **Raw Text**: User pastes text directly into textarea
   - **PDF Document**: User uploads a PDF file
+  - **URL**: User pastes a URL (especially Wikipedia articles) - content is automatically fetched and processed
 
 #### Step 2A: PDF Processing (if PDF uploaded)
 - **Function**: `handleFileChange()` in `App.tsx`
@@ -75,7 +76,31 @@ Backend API (Vercel Serverless)
 #### Step 2B: Text Processing (if raw text)
 - Text is directly stored in `uploadText` state
 
-#### Step 3: User Clicks "Ingest & Build Graph"
+#### Step 2C: URL Fetching (if URL mode)
+- **Function**: `handleFetchURL()` in `App.tsx`
+- **Frontend Service**: `urlService.ts` → `fetchURLContent()`
+- **Backend Service**: `urlService.js` → `fetchURLContent()`
+- **Backend Route**: `POST /api/documents/fetch-url`
+
+**Process**:
+1. **URL Validation**: Validates URL format and ensures HTTP/HTTPS protocol
+2. **Wikipedia Detection**: Checks if URL is from Wikipedia
+3. **Content Fetching**:
+   - **Wikipedia URLs**: Uses Wikipedia REST API
+     - First tries to fetch full article HTML: `GET /api/rest_v1/page/html/{title}`
+     - Falls back to summary if full article unavailable: `GET /api/rest_v1/page/summary/{title}`
+   - **Generic URLs**: Fetches HTML page directly with 10-second timeout
+4. **Text Extraction**: `extractTextFromHTML()` function:
+   - Removes scripts, styles, and non-content elements
+   - Converts HTML tags to line breaks (`<p>` → `\n\n`, `<h1>` → `\n\n`)
+   - Removes all HTML tags
+   - Decodes HTML entities (`&nbsp;`, `&amp;`, etc.)
+   - Cleans whitespace (multiple spaces → single space)
+5. **Automatic Processing**: After fetching, automatically triggers ingestion (no manual step needed)
+
+**Result**: Clean text content is stored in `uploadText` state and automatically processed
+
+#### Step 3: User Clicks "Ingest & Build Graph" (or automatic for URLs)
 - **Function**: `handleUpload()` in `App.tsx`
 - Creates a new document ID
 
@@ -93,6 +118,12 @@ Backend API (Vercel Serverless)
   - Groups sentences into chunks (max 15,000 characters per chunk)
   - Respects sentence boundaries (better than character splitting)
 - For each chunk, calls `extractGraphFromChunk()`
+
+**For URL Mode**:
+- After fetching, content is processed exactly like Raw Text Mode
+- Document name is automatically extracted from URL:
+  - **Wikipedia**: Extracts article title (e.g., "Incident response" from URL path)
+  - **Other URLs**: Uses full URL as document name
 
 #### Step 5: NLP-Based Entity Extraction
 - **Function**: `extractGraphFromChunk()` in `textProcessingService.ts`

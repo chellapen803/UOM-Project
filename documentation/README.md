@@ -4,7 +4,8 @@ A Knowledge Graph-based Retrieval-Augmented Generation (RAG) application that ex
 
 ## Features
 
-- 📄 **Document Upload**: Upload PDFs or paste raw text
+- 📄 **Document Upload**: Upload PDFs, paste raw text, or fetch content from URLs
+- 🔗 **URL Ingestion**: Automatically fetch and process content from URLs (especially Wikipedia articles)
 - 🔍 **Entity Extraction**: Automatic extraction of people, locations, organizations, and concepts using NLP
 - 🕸️ **Knowledge Graph**: Visualize relationships between entities in an interactive graph
 - 💬 **Intelligent Chatbot**: Ask questions about your documents with RAG-powered responses
@@ -146,8 +147,11 @@ UOM-Project/
 
 ## How It Works
 
-1. **Document Upload**: User uploads a PDF or pastes text
-2. **Text Extraction**: PDF pages are processed to extract text or render as images
+1. **Document Upload**: User uploads a PDF, pastes text, or provides a URL
+2. **Content Acquisition**:
+   - **PDF**: Pages are processed to extract text or render as images
+   - **Text**: Directly used for processing
+   - **URL**: Content is fetched from the web (Wikipedia articles optimized)
 3. **Entity Extraction**: Compromise.js extracts entities (people, places, organizations, concepts) and relationships
 4. **Graph Building**: Entities become nodes, relationships become links in the knowledge graph
 5. **Storage**: Graph data is saved to Neo4j for persistence

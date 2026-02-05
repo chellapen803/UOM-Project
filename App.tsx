@@ -9,6 +9,7 @@ import GraphVisualizer from './components/GraphVisualizer';
 import { MarkdownMessage } from './components/MarkdownMessage';
 import { chunkText, extractGraphFromChunk, extractGraphFromMixedContent } from './services/textProcessingService';
 import { extractContentFromPdf, PdfPage } from './services/pdfService';
+import { fetchURLContent } from './services/urlService';
 import { 
   saveGraphToNeo4j, 
   loadGraphFromNeo4j, 
@@ -103,9 +104,12 @@ const App = () => {
   const [processingStatus, setProcessingStatus] = useState('');
   
   // Upload State
-  const [uploadMode, setUploadMode] = useState<'text' | 'pdf'>('text');
+  const [uploadMode, setUploadMode] = useState<'text' | 'pdf' | 'url'>('text');
   const [uploadText, setUploadText] = useState(SAMPLE_TEXT);
   const [pdfFileName, setPdfFileName] = useState<string>('');
+  const [urlInput, setUrlInput] = useState<string>('');
+  const [isFetchingUrl, setIsFetchingUrl] = useState(false);
+  const [fetchedUrl, setFetchedUrl] = useState<string>(''); // Store the URL for document naming
   
   // New Hybrid State
   const [pdfPages, setPdfPages] = useState<PdfPage[]>([]);
@@ -305,18 +309,62 @@ const App = () => {
     setPdfStats({ textLen: 0, imgCount: 0 });
   };
 
+  // URL Fetch Handler - automatically processes after fetching
+  const handleFetchURL = async () => {
+    if (!urlInput.trim()) return;
+    
+    setIsFetchingUrl(true);
+    try {
+      const result = await fetchURLContent(urlInput.trim());
+      const url = urlInput.trim();
+      
+      // Set the content, store URL for document naming, and switch to text mode
+      setUploadText(result.content);
+      setFetchedUrl(url);
+      setUploadMode('text');
+      setUrlInput('');
+      setIsFetchingUrl(false);
+      
+      // Use requestAnimationFrame to ensure state is updated before calling handleUpload
+      requestAnimationFrame(() => {
+        handleUpload();
+      });
+    } catch (error: any) {
+      setIsFetchingUrl(false);
+      alert(error.message || 'Failed to fetch URL content');
+    }
+  };
+
   // 2. UPLOAD & PROCESS
   const handleUpload = async () => {
     const perfStart = performance.now();
     console.log(`[PERF] 🚀 Starting ingestion at ${new Date().toISOString()}`);
     
-    if (!uploadText && pdfPages.length === 0) return;
+    if (!uploadText && pdfPages.length === 0 && uploadMode !== 'url') return;
     setIsProcessing(true);
     setProcessingStatus('Initializing ingestion...');
     setIngestProgress({ current: 0, total: 0, phase: 'Initializing' });
 
     const newDocId = Math.random().toString(36).substr(2, 9);
-    const docName = uploadMode === 'pdf' && pdfFileName ? pdfFileName : `Document ${documents.length + 1}`;
+    let docName: string;
+    if (uploadMode === 'pdf' && pdfFileName) {
+      docName = pdfFileName;
+    } else if (fetchedUrl) {
+      // Extract a readable name from URL (e.g., Wikipedia article title)
+      try {
+        const urlObj = new URL(fetchedUrl);
+        if (urlObj.hostname.includes('wikipedia.org')) {
+          const title = urlObj.pathname.split('/wiki/')[1]?.replace(/_/g, ' ') || fetchedUrl;
+          docName = decodeURIComponent(title);
+        } else {
+          docName = fetchedUrl;
+        }
+      } catch {
+        docName = fetchedUrl;
+      }
+    } else {
+      docName = `Document ${documents.length + 1}`;
+    }
     
     let newNodes: any[] = [];
     let newLinks: any[] = [];
@@ -505,6 +553,7 @@ const App = () => {
       // Clear upload state
       if (uploadMode === 'text') {
         setUploadText('');
+        setFetchedUrl(''); // Clear fetched URL if it was set
       } else {
         clearPdfSelection();
       }
@@ -783,7 +832,7 @@ const App = () => {
                     <Card className="md:col-span-2">
                         <CardHeader>
                             <CardTitle className="text-lg">Upload Content</CardTitle>
-                            <CardDescription>Supported formats: Plain Text, PDF (OCR/Vision)</CardDescription>
+                            <CardDescription>Supported formats: Plain Text, PDF (OCR/Vision), URL (Wikipedia & more)</CardDescription>
                         </CardHeader>
                         <CardContent>
                             <div className="space-y-4">
@@ -800,6 +849,12 @@ const App = () => {
                                     >
                                         PDF Document
                                     </button>
+                                    <button 
+                                        onClick={() => setUploadMode('url')}
+                                        className={cn("px-4 py-1.5 text-sm font-medium rounded-md transition-all", uploadMode === 'url' ? "bg-white shadow-sm text-slate-900" : "text-slate-500 hover:text-slate-900")}
+                                    >
+                                        URL
+                                    </button>
                                 </div>
 
                                 {uploadMode === 'text' ? (
@@ -809,6 +864,39 @@ const App = () => {
                                         value={uploadText}
                                         onChange={(e) => setUploadText(e.target.value)}
                                     />
+                                ) : uploadMode === 'url' ? (
+                                    <div className="space-y-4">
+                                        <div className="flex gap-2">
+                                            <Input
+                                                type="url"
+                                                placeholder="Paste URL (e.g., https://en.wikipedia.org/wiki/Incident_response)"
+                                                value={urlInput}
+                                                onChange={(e) => setUrlInput(e.target.value)}
+                                                onKeyDown={(e) => e.key === 'Enter' && !isFetchingUrl && handleFetchURL()}
+                                                className="flex-1"
+                                                disabled={isFetchingUrl}
+                                            />
+                                            <Button 
+                                                onClick={handleFetchURL}
+                                                disabled={!urlInput.trim() || isFetchingUrl}
+                                            >
+                                                {isFetchingUrl ? (
+                                                    <>
+                                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                                        Fetching...
+                                                    </>
+                                                ) : (
+                                                    'Fetch'
+                                                )}
+                                            </Button>
+                                        </div>
+                                        {isFetchingUrl && (
+                                            <div className="flex items-center gap-2 text-sm text-slate-500 mt-2">
+                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                                <span>Fetching content from URL...</span>
+                                            </div>
+                                        )}
+                                    </div>
                                 ) : (
                                     <div className="border-2 border-dashed border-slate-200 rounded-lg p-10 flex flex-col items-center justify-center text-center hover:bg-slate-50/50 transition-colors">
                                         {pdfFileName ? (
@@ -879,7 +967,7 @@ const App = () => {
                             )}
                             <Button 
                                 onClick={handleUpload} 
-                                disabled={isProcessing || (!uploadText && pdfPages.length === 0) || isParsingPdf}
+                                disabled={isProcessing || (!uploadText && pdfPages.length === 0 && uploadMode !== 'url') || isParsingPdf || isFetchingUrl}
                             >
                                 {isProcessing && (
                                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -902,49 +990,6 @@ const App = () => {
                     </Card>
 
                     <div className="space-y-6">
-                        <Card>
-                            <CardHeader>
-                                <CardTitle className="text-base">Processing Queue</CardTitle>
-                            </CardHeader>
-                            <CardContent className="space-y-3">
-                                {documents.length === 0 && (
-                                    <div className="text-sm text-slate-400 text-center py-4">No documents yet</div>
-                                )}
-                                {documents.map((doc) => (
-                                    <DocumentItem 
-                                        key={doc.id} 
-                                        doc={doc} 
-                                        onVerify={async () => {
-                                            try {
-                                                const headers: HeadersInit = { 'Content-Type': 'application/json' };
-                                                const user = auth.currentUser;
-                                                if (user) {
-                                                    const token = await user.getIdToken();
-                                                    headers['Authorization'] = `Bearer ${token}`;
-                                                }
-                                                const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/documents/verify/${doc.id}`, {
-                                                    method: 'GET',
-                                                    headers
-                                                });
-                                                if (response.ok) {
-                                                    const data = await response.json();
-                                                    const pageInfo = data.pageRange 
-                                                        ? `Pages ${data.pageRange.min}-${data.pageRange.max}`
-                                                        : 'Page range unknown';
-                                                    alert(`Document: ${doc.name}\nChunks in DB: ${data.chunkCount}\n${pageInfo}`);
-                                                } else {
-                                                    alert('Failed to verify document');
-                                                }
-                                            } catch (error) {
-                                                console.error('Verification error:', error);
-                                                alert('Error verifying document');
-                                            }
-                                        }}
-                                    />
-                                ))}
-                            </CardContent>
-                        </Card>
-
                          <Alert>
                             <AlertCircle className="h-4 w-4" />
                             <AlertTitle>Did you know?</AlertTitle>
