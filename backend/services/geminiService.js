@@ -58,7 +58,7 @@ export async function generateRAGResponse(query, context) {
   
   const contextBlock = cleanedContext && cleanedContext.length > 0 
     ? cleanedContext.join("\n\n---\n\n") 
-    : "No relevant context found in the knowledge graph for this query.";
+    : "No relevant context was found in the knowledge graph for this query. The material you have ingested may not cover this exact topic.";
 
   const prompt = `You are a helpful AI assistant answering questions based on information from a knowledge graph.
 
@@ -74,6 +74,7 @@ export async function generateRAGResponse(query, context) {
 9. If multiple chunks discuss the same topic, **prioritize definition chunks**, then combine other relevant information
 10. **Start directly answering** the question without phrases like "Based on the context" or "Here's what I found"
 11. Use clear, readable formatting (paragraphs, bullet points if helpful, but not raw chunk dumps)
+12. **If the context section indicates that no relevant context was found**, you should STILL answer the question using your general cybersecurity and technical knowledge. You may briefly note that the knowledge graph does not cover this topic, but do not refuse to answer if you can answer from general knowledge.
 
 **Example of GOOD response for "explain MD5":**
 "MD5 (Message Digest 5) was released in 1991 by Ron Rivest as the next version of his message digest algorithm. It processes 512-bit blocks of the message, uses four distinct rounds of computation, and produces a digest of 128 bits. However, security researchers have demonstrated that MD5 is subject to collisions, which prevents its use for ensuring message integrity."

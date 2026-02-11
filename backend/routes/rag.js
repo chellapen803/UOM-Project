@@ -160,6 +160,21 @@ router.post('/chat', verifyToken, requireAuth, async (req, res) => {
           ...metadata,
           ...(rgcnResult.metadata || {})
         };
+
+        // If R-GCN retrieval didn't return any context, fall back to standard retrieval
+        // This prevents empty-context answers for queries that the standard retriever can handle.
+        if (!context || context.length === 0) {
+          if (isDev) {
+            console.log('[RAG] R-GCN returned no context, falling back to standard retrieval');
+          }
+          const standardContext = await retrieveContext(query);
+          context = standardContext;
+          metadata = {
+            ...metadata,
+            rgcnUsed: false,
+            retrievalMethod: 'standard_after_empty_rgcn'
+          };
+        }
       } catch (rgcnError) {
         console.warn('[RAG] R-GCN retrieval failed, falling back to standard:', rgcnError.message);
         // Fallback to standard retrieval
