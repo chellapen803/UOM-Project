@@ -736,27 +736,11 @@ const App = () => {
     const query = inputMessage;
     setInputMessage('');
     setIsProcessing(true);
-    
-    // If user has R-GCN disabled, skip the per-message health check and use standard messaging.
-    if (useRGCN) {
-      setProcessingStatus('Checking R-GCN status...');
-      try {
-        const health = await checkRGCNHealth();
-        if (health.available) {
-          setRgcnStatus('active');
-          setRgcnStats(health);
-          setProcessingStatus('Analyzing with R-GCN...');
-        } else {
-          setRgcnStatus('inactive');
-          setRgcnStats(null);
-          setProcessingStatus('Thinking...');
-        }
-      } catch (error) {
-        // If check fails, mark as inactive and continue with standard retrieval
-        setRgcnStatus('inactive');
-        setRgcnStats(null);
-        setProcessingStatus('Thinking...');
-      }
+
+    // Use existing R-GCN status (checked periodically) to set a friendly status message.
+    // Avoid an extra per-message health check to reduce latency.
+    if (useRGCN && rgcnStatus === 'active') {
+      setProcessingStatus('Analyzing with R-GCN...');
     } else {
       setProcessingStatus('Thinking...');
     }
