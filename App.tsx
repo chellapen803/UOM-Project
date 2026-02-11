@@ -309,29 +309,152 @@ const App = () => {
     setPdfStats({ textLen: 0, imgCount: 0 });
   };
 
-  // URL Fetch Handler - automatically processes after fetching
-  const handleFetchURL = async () => {
+  // URL Fetch & Ingest Handler - fetches and processes in one go
+  const handleFetchAndIngestURL = async () => {
     if (!urlInput.trim()) return;
     
     setIsFetchingUrl(true);
+    setIsProcessing(true);
+    setProcessingStatus('Fetching content from URL...');
+    
     try {
       const result = await fetchURLContent(urlInput.trim());
       const url = urlInput.trim();
       
-      // Set the content, store URL for document naming, and switch to text mode
+      // Set the content and store URL for document naming
       setUploadText(result.content);
       setFetchedUrl(url);
-      setUploadMode('text');
-      setUrlInput('');
+      
+      // Keep in URL mode to show preview
       setIsFetchingUrl(false);
       
-      // Use requestAnimationFrame to ensure state is updated before calling handleUpload
-      requestAnimationFrame(() => {
-        handleUpload();
-      });
+      // Now process the content
+      setProcessingStatus('Processing content...');
+      await processURLContent(result.content, url);
+      
     } catch (error: any) {
       setIsFetchingUrl(false);
+      setIsProcessing(false);
+      setProcessingStatus('');
       alert(error.message || 'Failed to fetch URL content');
+    }
+  };
+  
+  // Process URL content (extracted from handleUpload)
+  const processURLContent = async (content: string, url: string) => {
+    const newDocId = Math.random().toString(36).substr(2, 9);
+    let docName: string;
+    
+    // Extract a readable name from URL (e.g., Wikipedia article title)
+    try {
+      const urlObj = new URL(url);
+      if (urlObj.hostname.includes('wikipedia.org')) {
+        const title = urlObj.pathname.split('/wiki/')[1]?.replace(/_/g, ' ') || url;
+        docName = decodeURIComponent(title);
+      } else {
+        docName = url;
+      }
+    } catch {
+      docName = url;
+    }
+    
+    let newNodes: any[] = [];
+    let newLinks: any[] = [];
+    let chunks: any[] = [];
+    
+    // Chunk the text
+    const chunksRaw = chunkText(content);
+    chunks = chunksRaw.map(text => ({ id: Math.random().toString(36), text, sourceDoc: newDocId }));
+    const totalSteps = chunks.length + 2;
+    let currentStep = 0;
+    setIngestProgress({ current: 0, total: totalSteps, phase: 'Chunking text' });
+    
+    // Extract entities from chunks
+    for (let i = 0; i < chunks.length; i++) {
+      setProcessingStatus(`Extracting entities from chunk ${i + 1} of ${chunks.length}...`);
+      const chunk = chunks[i];
+      const extracted = extractGraphFromChunk(chunk.text);
+      newNodes = [...newNodes, ...extracted.nodes];
+      newLinks = [...newLinks, ...extracted.links];
+      currentStep += 1;
+      setIngestProgress({ current: currentStep, total: totalSteps, phase: `Extracted entities from chunk ${i + 1}` });
+    }
+    
+    setProcessingStatus('Saving to Neo4j database...');
+    
+    try {
+      const graphTimeout = 300000;
+      const docTimeout = 300000;
+      
+      // Save graph data
+      setIngestProgress(prev => ({
+        current: Math.max(prev.current, prev.total > 0 ? prev.total - 2 : 0),
+        total: prev.total || totalSteps,
+        phase: 'Saving graph structure to Neo4j'
+      }));
+      
+      await new Promise(resolve => setTimeout(resolve, 0));
+      await saveGraphToNeo4j(newNodes, newLinks, graphTimeout);
+      
+      // Save document and chunks
+      const entityIds = newNodes.map(n => n.id);
+      setProcessingStatus(`Saving document chunks (${chunks.length} total)...`);
+      setIngestProgress(prev => ({
+        current: (prev.total || totalSteps) - 1,
+        total: prev.total || totalSteps,
+        phase: 'Saving document and chunks to Neo4j'
+      }));
+      
+      await new Promise(resolve => setTimeout(resolve, 0));
+      await saveDocumentToNeo4j(newDocId, docName, chunks, entityIds, docTimeout);
+      
+      // Update local documents state
+      const newDoc: IngestedDocument = {
+        id: newDocId,
+        name: docName,
+        uploadDate: new Date().toLocaleDateString(),
+        status: 'ready',
+        chunks,
+        chunkCount: chunks.length
+      };
+      
+      setDocuments(prev => [...prev, newDoc]);
+      
+      // Clear processing
+      setIsProcessing(false);
+      setProcessingStatus('');
+      setIngestProgress({ current: 0, total: 0, phase: '' });
+      
+      // Clear URL input but keep the preview
+      setUrlInput('');
+      
+      // Reload graph
+      setProcessingStatus('Reloading graph from database...');
+      await new Promise(resolve => setTimeout(resolve, 0));
+      
+      try {
+        const updatedGraph = await loadGraphFromNeo4j();
+        setGraphData(updatedGraph);
+      } catch (error) {
+        console.warn('Graph reload failed, using fallback');
+        setGraphData(prev => {
+          const allNodes = [...prev.nodes, ...newNodes];
+          const allLinks = [...prev.links, ...newLinks];
+          const uniqueNodes = Array.from(
+            new Map(allNodes.map(item => [item.id.toLowerCase(), item])).values()
+          );
+          return { nodes: uniqueNodes, links: allLinks };
+        });
+      } finally {
+        setProcessingStatus('');
+      }
+      
+    } catch (error: any) {
+      console.error('[App] Error saving to Neo4j:', error);
+      setIsProcessing(false);
+      setProcessingStatus('');
+      setIngestProgress({ current: 0, total: 0, phase: '' });
+      alert(`Failed to save to database: ${error.message || 'Unknown error'}. Please ensure the backend server is running.`);
     }
   };
 
@@ -865,28 +988,46 @@ const App = () => {
                                                 placeholder="Paste URL (e.g., https://en.wikipedia.org/wiki/Incident_response)"
                                                 value={urlInput}
                                                 onChange={(e) => setUrlInput(e.target.value)}
-                                                onKeyDown={(e) => e.key === 'Enter' && !isFetchingUrl && handleFetchURL()}
+                                                onKeyDown={(e) => e.key === 'Enter' && !isFetchingUrl && !isProcessing && handleFetchAndIngestURL()}
                                                 className="flex-1"
-                                                disabled={isFetchingUrl}
+                                                disabled={isFetchingUrl || isProcessing}
                                             />
                                             <Button 
-                                                onClick={handleFetchURL}
-                                                disabled={!urlInput.trim() || isFetchingUrl}
+                                                onClick={handleFetchAndIngestURL}
+                                                disabled={!urlInput.trim() || isFetchingUrl || isProcessing}
                                             >
-                                                {isFetchingUrl ? (
+                                                {isFetchingUrl || isProcessing ? (
                                                     <>
                                                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                                        Fetching...
+                                                        {isFetchingUrl ? 'Fetching...' : 'Processing...'}
                                                     </>
                                                 ) : (
-                                                    'Fetch'
+                                                    'Fetch & Ingest'
                                                 )}
                                             </Button>
                                         </div>
-                                        {isFetchingUrl && (
+                                        {(isFetchingUrl || isProcessing) && (
                                             <div className="flex items-center gap-2 text-sm text-slate-500 mt-2">
                                                 <Loader2 className="h-4 w-4 animate-spin" />
-                                                <span>Fetching content from URL...</span>
+                                                <span>{processingStatus || 'Processing...'}</span>
+                                            </div>
+                                        )}
+                                        {uploadText && !isProcessing && (
+                                            <div className="mt-4 p-4 bg-slate-50 border border-slate-200 rounded-lg">
+                                                <div className="flex items-center justify-between mb-2">
+                                                    <h4 className="text-sm font-semibold text-slate-700">Content Preview</h4>
+                                                    <Badge variant="secondary" className="text-xs">
+                                                        {uploadText.length.toLocaleString()} characters
+                                                    </Badge>
+                                                </div>
+                                                <div className="text-xs text-slate-600 font-mono bg-white p-3 rounded border border-slate-200 max-h-48 overflow-y-auto">
+                                                    {uploadText.slice(0, 500)}
+                                                    {uploadText.length > 500 && '...'}
+                                                </div>
+                                                <div className="mt-2 flex items-center gap-2">
+                                                    <CheckCircle2 size={14} className="text-green-600" />
+                                                    <span className="text-xs text-green-700 font-medium">Successfully ingested!</span>
+                                                </div>
                                             </div>
                                         )}
                                     </div>
@@ -940,45 +1081,47 @@ const App = () => {
                                     </div>
                                 )}
                         </CardContent>
-                        <CardFooter className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-3 border-t bg-slate-50/50 p-6">
-                            {isProcessing && (
-                                <div className="flex flex-col gap-1 text-sm text-slate-500 sm:mr-2 max-w-xs sm:max-w-sm">
-                                    <div className="flex items-center gap-2">
-                                        <Loader2 size={14} className="animate-spin" />
-                                        <span className="truncate">
-                                            {processingStatus || 'Processing document...'}
-                                        </span>
-                                    </div>
-                                    {ingestProgress.total > 0 && (
-                                        <span className="text-xs text-slate-400">
-                                            Step {Math.min(ingestProgress.current + 1, ingestProgress.total)} of {ingestProgress.total}
-                                            {ingestProgress.phase ? ` • ${ingestProgress.phase}` : ''}
-                                        </span>
-                                    )}
-                                </div>
-                            )}
-                            <Button 
-                                onClick={handleUpload} 
-                                disabled={isProcessing || (!uploadText && pdfPages.length === 0 && uploadMode !== 'url') || isParsingPdf || isFetchingUrl}
-                            >
+                        {uploadMode !== 'url' && (
+                            <CardFooter className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-3 border-t bg-slate-50/50 p-6">
                                 {isProcessing && (
-                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    <div className="flex flex-col gap-1 text-sm text-slate-500 sm:mr-2 max-w-xs sm:max-w-sm">
+                                        <div className="flex items-center gap-2">
+                                            <Loader2 size={14} className="animate-spin" />
+                                            <span className="truncate">
+                                                {processingStatus || 'Processing document...'}
+                                            </span>
+                                        </div>
+                                        {ingestProgress.total > 0 && (
+                                            <span className="text-xs text-slate-400">
+                                                Step {Math.min(ingestProgress.current + 1, ingestProgress.total)} of {ingestProgress.total}
+                                                {ingestProgress.phase ? ` • ${ingestProgress.phase}` : ''}
+                                            </span>
+                                        )}
+                                    </div>
                                 )}
-                                {isProcessing ? 'Processing...' : 'Ingest & Build Graph'}
-                            </Button>
-                            {isProcessing && (
-                                <div className="w-full sm:w-64 h-1 bg-slate-200 rounded-full overflow-hidden">
-                                    {ingestProgress.total > 0 ? (
-                                        <div
-                                            className="h-1 bg-blue-500 rounded-full transition-all duration-300"
-                                            style={{ width: `${Math.min(100, ((ingestProgress.current + 1) / ingestProgress.total) * 100)}%` }}
-                                        />
-                                    ) : (
-                                        <div className="h-1 w-full bg-blue-500 animate-pulse rounded-full" />
+                                <Button 
+                                    onClick={handleUpload} 
+                                    disabled={isProcessing || (!uploadText && pdfPages.length === 0) || isParsingPdf || isFetchingUrl}
+                                >
+                                    {isProcessing && (
+                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                                     )}
-                                </div>
-                            )}
-                        </CardFooter>
+                                    {isProcessing ? 'Processing...' : 'Ingest & Build Graph'}
+                                </Button>
+                                {isProcessing && (
+                                    <div className="w-full sm:w-64 h-1 bg-slate-200 rounded-full overflow-hidden">
+                                        {ingestProgress.total > 0 ? (
+                                            <div
+                                                className="h-1 bg-blue-500 rounded-full transition-all duration-300"
+                                                style={{ width: `${Math.min(100, ((ingestProgress.current + 1) / ingestProgress.total) * 100)}%` }}
+                                            />
+                                        ) : (
+                                            <div className="h-1 w-full bg-blue-500 animate-pulse rounded-full" />
+                                        )}
+                                    </div>
+                                )}
+                            </CardFooter>
+                        )}
                     </Card>
 
                     <div className="space-y-6">

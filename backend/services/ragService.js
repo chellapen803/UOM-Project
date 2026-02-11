@@ -1,6 +1,57 @@
 import driver from '../config/neo4j.js';
 
 /**
+ * Calculate Levenshtein distance between two strings (for fuzzy matching)
+ */
+function levenshteinDistance(str1, str2) {
+  const len1 = str1.length;
+  const len2 = str2.length;
+  const matrix = Array(len1 + 1).fill(null).map(() => Array(len2 + 1).fill(0));
+  
+  for (let i = 0; i <= len1; i++) matrix[i][0] = i;
+  for (let j = 0; j <= len2; j++) matrix[0][j] = j;
+  
+  for (let i = 1; i <= len1; i++) {
+    for (let j = 1; j <= len2; j++) {
+      const cost = str1[i - 1] === str2[j - 1] ? 0 : 1;
+      matrix[i][j] = Math.min(
+        matrix[i - 1][j] + 1,      // deletion
+        matrix[i][j - 1] + 1,      // insertion
+        matrix[i - 1][j - 1] + cost // substitution
+      );
+    }
+  }
+  
+  return matrix[len1][len2];
+}
+
+/**
+ * Check if two words are similar (handles typos)
+ * Returns true if words are similar enough
+ */
+function isSimilarWord(word1, word2, maxDistance = 2) {
+  // Exact match
+  if (word1 === word2) return true;
+  
+  // One contains the other (e.g., "phish" in "phishing")
+  if (word1.includes(word2) || word2.includes(word1)) return true;
+  
+  // For short words, be more strict
+  if (word1.length < 4 || word2.length < 4) {
+    return word1 === word2 || word1.includes(word2) || word2.includes(word1);
+  }
+  
+  // For longer words, allow typos based on Levenshtein distance
+  const distance = levenshteinDistance(word1, word2);
+  const maxLen = Math.max(word1.length, word2.length);
+  
+  // Allow 1 typo for words 4-6 chars, 2 typos for 7+ chars
+  const allowedDistance = maxLen <= 6 ? 1 : maxDistance;
+  
+  return distance <= allowedDistance;
+}
+
+/**
  * Extract meaningful keywords from a query
  * Removes common stop words but preserves important context words
  */
@@ -447,6 +498,85 @@ export async function retrieveContext(query) {
       }
     }
     
+    // Strategy 6: FUZZY MATCHING - Handle typos and variations
+    // If we still don't have many results, try fuzzy matching on keywords
+    if (keywords.length > 0 && chunkScores.size < 5) {
+      const isDev = process.env.NODE_ENV !== 'production';
+      if (isDev) {
+        console.log(`[RAG] Low results (${chunkScores.size}), trying fuzzy matching for keywords: ${keywords.join(', ')}`);
+      }
+      
+      // Get a larger sample of chunks to fuzzy match against
+      const allChunksResult = await session.run(
+        `MATCH (chunk:Chunk)
+         RETURN chunk.text as text
+         LIMIT 200`
+      );
+      
+      const allChunks = allChunksResult.records.map(r => r.get('text'));
+      
+      // Fuzzy match each chunk against keywords
+      for (const chunkText of allChunks) {
+        if (!chunkText) continue;
+        
+        const chunkLower = chunkText.toLowerCase();
+        // Extract unique words from chunk (remove duplicates for efficiency)
+        const chunkWords = [...new Set(chunkLower.split(/\W+/).filter(w => w.length > 2))];
+        
+        // Check if any chunk word is similar to any keyword
+        let fuzzyScore = 0;
+        const matchedPairs = [];
+        
+        for (const keyword of keywords) {
+          if (keyword.length < 3) continue; // Skip very short keywords for fuzzy matching
+          
+          for (const chunkWord of chunkWords) {
+            if (isSimilarWord(keyword, chunkWord)) {
+              fuzzyScore += 20; // Bonus for fuzzy match
+              matchedPairs.push(`${keyword}≈${chunkWord}`);
+              break; // Only count one match per keyword
+            }
+          }
+        }
+        
+        if (fuzzyScore > 0 && !chunkScores.has(chunkText)) {
+          if (isDev) {
+            console.log(`[RAG] Fuzzy matches: ${matchedPairs.join(', ')} (score: ${fuzzyScore})`);
+          }
+          chunkScores.set(chunkText, fuzzyScore);
+        }
+      }
+      
+      if (isDev) {
+        console.log(`[RAG] After fuzzy matching: ${chunkScores.size} candidate chunks`);
+      }
+    }
+    
+    // Strategy 7: PARTIAL WORD MATCHING - Handle compound words and variations
+    // e.g., "phish" should match "phishing", "spear" should match "spear-phishing"
+    if (keywords.length > 0 && chunkScores.size < 5) {
+      for (const keyword of keywords) {
+        // Skip very short keywords for partial matching
+        if (keyword.length < 4) continue;
+        
+        // Search for chunks where keyword is part of a larger word
+        const partialResult = await session.run(
+          `MATCH (chunk:Chunk)
+           WHERE toLower(chunk.text) =~ $pattern
+           RETURN DISTINCT chunk.text as text
+           LIMIT 10`,
+          { pattern: `(?i).*${keyword}.*` } // Case-insensitive regex
+        );
+        
+        partialResult.records.forEach(r => {
+          const text = r.get('text');
+          if (text && !chunkScores.has(text)) {
+            chunkScores.set(text, 15); // Moderate score for partial match
+          }
+        });
+      }
+    }
+    
     // Score all chunks
     const scoredChunks = Array.from(chunkScores.entries()).map(([text, baseScore]) => {
       const relevanceScore = scoreChunkRelevance(text, query, keywords);
@@ -517,7 +647,8 @@ export async function retrieveContext(query) {
     }
     
     // Filter results: prioritize chunks that actually contain the core phrase
-    // For multi-word queries, we need to be strict - only return chunks with the phrase
+    // For multi-word queries, we PREFER chunks with the phrase but still fall back
+    // to the best-scoring chunks rather than returning nothing.
     if (corePhrase && corePhrase.length > 5) {
       // First, try to find chunks that contain the actual phrase
       const phraseMatches = topChunks.filter((chunk, idx) => {
@@ -533,10 +664,13 @@ export async function retrieveContext(query) {
         // Return chunks that actually contain the phrase (these are the real matches)
         console.log(`[RAG] ✅ Found ${phraseMatches.length} chunks containing the core phrase "${corePhrase}"`);
         return phraseMatches.slice(0, 5);
-      } else {
+        }
+
         // No chunks contain the phrase - log this for debugging
         console.log(`[RAG] ⚠️ No chunks found containing core phrase "${corePhrase}" - chunks may not exist in database`);
-        // Still return top chunks but with lower confidence
+
+        // Still return top chunks but with lower confidence.
+        // First, prefer any very high-scoring matches.
         const highQualityMatches = topChunks.filter((_, idx) =>
           scoredChunks[idx].score > 200  // Very high threshold if phrase not found
         );
@@ -545,19 +679,27 @@ export async function retrieveContext(query) {
           return highQualityMatches.slice(0, 3);
         }
         
-        // Last resort: return empty if we can't find the phrase
+        // FINAL FALLBACK:
+        // If we have candidate chunks but none pass the strict filters,
+        // return the top 3 by score instead of an empty context. This
+        // prevents the chatbot from ignoring ingested content for
+        // multi-word queries where wording doesn't exactly match.
+        if (topChunks.length > 0) {
+          return topChunks.slice(0, Math.min(3, topChunks.length));
+        }
+        
+        // Truly nothing useful found.
         return [];
-      }
     }
     
-    // For single-word queries, use standard filtering
+    // For single-word queries, use more forgiving filtering
     const goodMatches = topChunks.filter((_, idx) => 
-      scoredChunks[idx].score > 30
+      scoredChunks[idx].score > 15  // Lowered from 30 - be more forgiving
     );
     
     if (goodMatches.length > 0) {
       const highQualityMatches = goodMatches.filter((_, idx) =>
-        scoredChunks[idx].score > 100
+        scoredChunks[idx].score > 50  // Lowered from 100
       );
       
       if (highQualityMatches.length >= 2) {
@@ -567,7 +709,13 @@ export async function retrieveContext(query) {
       return goodMatches.slice(0, 5);
     }
     
-    // Last resort: return empty (better than random junk)
+    // If we have any chunks at all, return them (better than nothing)
+    if (topChunks.length > 0) {
+      console.log(`[RAG] 📋 Returning ${Math.min(3, topChunks.length)} chunks as last resort`);
+      return topChunks.slice(0, 3);
+    }
+    
+    // Truly no results
     return [];
   } catch (error) {
     console.error('Error in RAG retrieval:', error);
