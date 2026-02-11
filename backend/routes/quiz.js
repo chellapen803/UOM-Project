@@ -308,10 +308,6 @@ ${textContent}`;
         return await ai.models.generateContent({
           model: MODEL_NAME,
           contents: [{ role: 'user', parts }],
-          thinkingConfig: {
-            includeThoughts: true,
-            budgetTokens: 256,
-          },
         });
       });
 

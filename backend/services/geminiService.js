@@ -96,10 +96,6 @@ Provide a clear, direct answer to the question. Start with the definition/explan
     const response = await ai.models.generateContent({
       model: MODEL_NAME,
       contents: prompt,
-      thinkingConfig: {
-        includeThoughts: true,
-        budgetTokens: 256,
-      },
     });
     
     const responseText = response.text;
