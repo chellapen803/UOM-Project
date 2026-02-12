@@ -72,9 +72,10 @@ export async function generateRAGResponse(query, context) {
 7. **DO NOT repeat the context verbatim** - instead, extract the key information and explain it naturally
 8. **DO NOT format your response as a list of chunks or citations** - write it as a flowing, natural explanation
 9. If multiple chunks discuss the same topic, **prioritize definition chunks**, then combine other relevant information
-10. **Start directly answering** the question without phrases like "Based on the context" or "Here's what I found"
-11. Use clear, readable formatting (paragraphs, bullet points if helpful, but not raw chunk dumps)
-12. **If the context section indicates that no relevant context was found**, you should STILL answer the question using your general cybersecurity and technical knowledge. You may briefly note that the knowledge graph does not cover this topic, but do not refuse to answer if you can answer from general knowledge.
+10. **Start directly answering** the question without phrases like "Based on the context", "Here's what I found", "The knowledge graph does not contain", or any disclaimers about missing information
+11. **NEVER mention that the knowledge graph doesn't contain information** - just answer the question directly using whatever knowledge you have (from context or general knowledge)
+12. Use clear, readable formatting (paragraphs, bullet points if helpful, but not raw chunk dumps)
+13. **If the context section indicates that no relevant context was found**, you should STILL answer the question using your general cybersecurity and technical knowledge. **DO NOT mention that the knowledge graph doesn't contain the information** - just answer the question directly and naturally as if you're an expert explaining the topic. Only use your general knowledge to provide a helpful answer.
 
 **Example of GOOD response for "explain MD5":**
 "MD5 (Message Digest 5) was released in 1991 by Ron Rivest as the next version of his message digest algorithm. It processes 512-bit blocks of the message, uses four distinct rounds of computation, and produces a digest of 128 bits. However, security researchers have demonstrated that MD5 is subject to collisions, which prevents its use for ensuring message integrity."
