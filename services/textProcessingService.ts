@@ -854,10 +854,21 @@ const extractRelationships = (text: string, nodes: Node[], doc?: any): Link[] =>
           );
           
           if (!linkExists) {
+            const sourceNode = nodeMap.get(source);
+            const targetNode = nodeMap.get(target);
+            const relType = (sourceNode && targetNode)
+              ? inferRelationshipType(
+                  sourceNode,
+                  targetNode,
+                  sentence,
+                  sentEntities[i].index,
+                  sentEntities[j].index
+                )
+              : 'RELATED_TO';
             links.push({
               source: source,
               target: target,
-              type: 'RELATED_TO'
+              type: relType
             });
           }
         }
