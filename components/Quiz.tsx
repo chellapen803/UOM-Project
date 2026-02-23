@@ -17,13 +17,14 @@ const Quiz = () => {
   const [isCheckingQuestions, setIsCheckingQuestions] = useState(true);
   
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
-  const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]); // Selected questions for the quiz (90 random)
+  const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]); // Selected questions for the quiz
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<number, 'A' | 'B' | 'C' | 'D' | null>>({});
   const [showResults, setShowResults] = useState(false);
   const [timeStarted, setTimeStarted] = useState<number | null>(null);
   const [timeElapsed, setTimeElapsed] = useState(0);
   const [questionsPerPage, setQuestionsPerPage] = useState(10);
+  const [quizQuestionCount, setQuizQuestionCount] = useState(90);
   
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -73,6 +74,20 @@ const Quiz = () => {
     checkQuestions();
   }, [currentUser]);
 
+  // Keep selected quiz question count in sync with available questions
+  React.useEffect(() => {
+    if (questions.length > 0) {
+      const maxSelectable = Math.min(90, questions.length);
+      const minSelectable = maxSelectable >= 10 ? 10 : 1;
+      setQuizQuestionCount(prev => {
+        let next = prev;
+        if (next > maxSelectable) next = maxSelectable;
+        if (next < minSelectable) next = minSelectable;
+        return next;
+      });
+    }
+  }, [questions.length]);
+
   // Start timer when quiz begins
   React.useEffect(() => {
     if (state === 'taking' && timeStarted) {
@@ -90,15 +105,22 @@ const Quiz = () => {
 
 
   const startQuiz = () => {
-    // Randomly select 90 questions (or all if less than 90)
-    const QUIZ_QUESTION_COUNT = 90;
+    // Randomly select N questions (or all if less than N), capped at 90
+    const MAX_QUIZ_QUESTIONS = 90;
+    const availableCount = questions.length;
+    const maxSelectable = Math.min(MAX_QUIZ_QUESTIONS, availableCount);
+    const QUIZ_QUESTION_COUNT = Math.min(quizQuestionCount, maxSelectable || 0);
     let selectedQuestions: QuizQuestion[] = [];
-    
-    if (questions.length <= QUIZ_QUESTION_COUNT) {
-      // If we have 90 or fewer questions, use all of them
+
+    if (QUIZ_QUESTION_COUNT === 0 || availableCount === 0) {
+      return;
+    }
+
+    if (QUIZ_QUESTION_COUNT >= availableCount) {
+      // If we have fewer or equal questions than requested, use all of them
       selectedQuestions = [...questions];
     } else {
-      // Randomly select 90 questions
+      // Randomly select the requested number of questions
       const shuffled = [...questions].sort(() => Math.random() - 0.5);
       selectedQuestions = shuffled.slice(0, QUIZ_QUESTION_COUNT);
       // Re-number the questions to be sequential (1, 2, 3, ...)
@@ -232,9 +254,47 @@ const Quiz = () => {
                   <div>
                     <p className="font-medium text-green-900">Ready to start quiz</p>
                     <p className="text-sm text-green-700">{questions.length} questions available</p>
-                    <p className="text-xs text-green-600 mt-1">Quiz will randomly select {Math.min(90, questions.length)} questions</p>
+                    <p className="text-xs text-green-600 mt-1">
+                      Quiz can include up to {Math.min(90, questions.length)} questions. Use the slider below to choose how many.
+                    </p>
                   </div>
                 </div>
+
+                {Math.min(90, questions.length) > 0 && (
+                  <div className="p-4 bg-white border border-slate-200 rounded-lg space-y-3">
+                    {(() => {
+                      const maxSelectable = Math.min(90, questions.length);
+                      const minSelectable = maxSelectable >= 10 ? 10 : 1;
+                      const clampedValue = Math.min(
+                        Math.max(quizQuestionCount, minSelectable),
+                        maxSelectable
+                      );
+                      
+                      return (
+                        <>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="font-medium text-slate-800">Number of questions in this quiz</span>
+                      <span className="text-blue-600 font-semibold">
+                            {clampedValue}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                          min={minSelectable}
+                          max={maxSelectable}
+                          value={clampedValue}
+                          onChange={(e) => setQuizQuestionCount(parseInt(e.target.value, 10))}
+                      className="w-full accent-blue-600"
+                    />
+                    <div className="flex justify-between text-xs text-slate-500">
+                          <span>{minSelectable}</span>
+                          <span>{maxSelectable}</span>
+                    </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                )}
               </div>
             </CardContent>
             <CardFooter className="flex justify-end">

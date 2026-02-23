@@ -44,6 +44,12 @@ Neo4j is a graph database management system developed by Neo4j, Inc.
 Firebase provides backend services such as Firestore and Authentication.
 `;
 
+const CHAT_TEMPLATES = [
+  'What kinds of questions can you answer in this system?',
+  'Give me an overview of the main topics covered in the knowledge graph.',
+  'How should I ask questions to get the most useful answers from you?',
+];
+
 // Document item component with verification
 const DocumentItem = ({ doc, onVerify }: { doc: IngestedDocument; onVerify: () => void }) => {
   return (
@@ -261,6 +267,80 @@ const App = () => {
   }, [messages, currentUser, appUser]);
 
   // --- ACTIONS ---
+
+  const sendMessage = async (content: string) => {
+    if (!content.trim()) return;
+
+    const userMsg: Message = { role: 'user', content, timestamp: Date.now() };
+    setMessages(prev => [...prev, userMsg]);
+    const query = content;
+    setIsProcessing(true);
+    
+    // If user has R-GCN disabled, skip the per-message health check and use standard messaging.
+    if (useRGCN) {
+      setProcessingStatus('Checking R-GCN status...');
+      try {
+        const health = await checkRGCNHealth();
+        if (health.available) {
+          setRgcnStatus('active');
+          setRgcnStats(health);
+          setProcessingStatus('Analyzing with R-GCN...');
+        } else {
+          setRgcnStatus('inactive');
+          setRgcnStats(null);
+          setProcessingStatus('Thinking...');
+        }
+      } catch (error) {
+        // If check fails, mark as inactive and continue with standard retrieval
+        setRgcnStatus('inactive');
+        setRgcnStats(null);
+        setProcessingStatus('Thinking...');
+      }
+    } else {
+      setProcessingStatus('Thinking...');
+    }
+
+    try {
+      // Use backend RAG chat endpoint (retrieves context + generates response)
+      // This keeps the API key secure on the backend
+      const result = await chatWithRAG(query, { useRGCN });
+      
+      const botMsg: Message = {
+        role: 'model',
+        content: result.response,
+        timestamp: Date.now(),
+        retrievedContext: result.context,
+        metadata: result.metadata
+      };
+
+      setMessages(prev => [...prev, botMsg]);
+    } catch (error: any) {
+      console.error('Chat error:', error);
+      
+      // Try to parse error response for better messaging
+      let errorMessage = error.message || 'Unknown error';
+      
+      // If it's a rate limit error, provide more helpful guidance
+      if (errorMessage.includes('Rate limit') || errorMessage.includes('quota')) {
+        errorMessage = `⚠️ **Rate Limit Reached**: ${errorMessage}\n\n` +
+          `**Solutions:**\n` +
+          `• Wait for the quota to reset (free tier: 20 requests/day)\n` +
+          `• Upgrade your Gemini API plan for higher limits\n` +
+          `• Check your usage: https://ai.dev/usage?tab=rate-limit`;
+      }
+      
+      const errorMsg: Message = {
+        role: 'model',
+        content: `Sorry, I encountered an error: ${errorMessage}`,
+        timestamp: Date.now(),
+        retrievedContext: []
+      };
+      setMessages(prev => [...prev, errorMsg]);
+    } finally {
+      setIsProcessing(false);
+      setProcessingStatus('');
+    }
+  };
 
   // 1. PDF HANDLING
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -731,76 +811,14 @@ const App = () => {
   const handleSendMessage = async () => {
     if (!inputMessage.trim()) return;
 
-    const userMsg: Message = { role: 'user', content: inputMessage, timestamp: Date.now() };
-    setMessages(prev => [...prev, userMsg]);
-    const query = inputMessage;
+    const content = inputMessage;
     setInputMessage('');
-    setIsProcessing(true);
-    
-    // If user has R-GCN disabled, skip the per-message health check and use standard messaging.
-    if (useRGCN) {
-      setProcessingStatus('Checking R-GCN status...');
-      try {
-        const health = await checkRGCNHealth();
-        if (health.available) {
-          setRgcnStatus('active');
-          setRgcnStats(health);
-          setProcessingStatus('Analyzing with R-GCN...');
-        } else {
-          setRgcnStatus('inactive');
-          setRgcnStats(null);
-          setProcessingStatus('Thinking...');
-        }
-      } catch (error) {
-        // If check fails, mark as inactive and continue with standard retrieval
-        setRgcnStatus('inactive');
-        setRgcnStats(null);
-        setProcessingStatus('Thinking...');
-      }
-    } else {
-      setProcessingStatus('Thinking...');
-    }
+    await sendMessage(content);
+  };
 
-    try {
-      // Use backend RAG chat endpoint (retrieves context + generates response)
-      // This keeps the API key secure on the backend
-      const result = await chatWithRAG(query, { useRGCN });
-      
-      const botMsg: Message = {
-        role: 'model',
-        content: result.response,
-        timestamp: Date.now(),
-        retrievedContext: result.context,
-        metadata: result.metadata
-      };
-
-      setMessages(prev => [...prev, botMsg]);
-    } catch (error: any) {
-      console.error('Chat error:', error);
-      
-      // Try to parse error response for better messaging
-      let errorMessage = error.message || 'Unknown error';
-      
-      // If it's a rate limit error, provide more helpful guidance
-      if (errorMessage.includes('Rate limit') || errorMessage.includes('quota')) {
-        errorMessage = `⚠️ **Rate Limit Reached**: ${errorMessage}\n\n` +
-          `**Solutions:**\n` +
-          `• Wait for the quota to reset (free tier: 20 requests/day)\n` +
-          `• Upgrade your Gemini API plan for higher limits\n` +
-          `• Check your usage: https://ai.dev/usage?tab=rate-limit`;
-      }
-      
-      const errorMsg: Message = {
-        role: 'model',
-        content: `Sorry, I encountered an error: ${errorMessage}`,
-        timestamp: Date.now(),
-        retrievedContext: []
-      };
-      setMessages(prev => [...prev, errorMsg]);
-    } finally {
-      setIsProcessing(false);
-      setProcessingStatus('');
-    }
+  const handleTemplateClick = async (prompt: string) => {
+    if (isProcessing) return;
+    await sendMessage(prompt);
   };
 
   const NavItem = ({ view, icon: Icon, label }: { view: AppView; icon: any; label: string }) => (
@@ -1272,6 +1290,25 @@ const App = () => {
                 
                 <div className="flex-1 overflow-y-auto p-4 md:p-6 scroll-smooth" ref={scrollRef}>
                     <div className="max-w-3xl mx-auto space-y-6">
+                        {messages.filter(msg => msg.role === 'user').length === 0 && (
+                            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">
+                                <p className="text-xs font-medium text-slate-700 mb-2">
+                                    Not sure what to ask? Try one of these:
+                                </p>
+                                <div className="flex flex-wrap gap-2">
+                                    {CHAT_TEMPLATES.map((template) => (
+                                        <button
+                                            key={template}
+                                            type="button"
+                                            onClick={() => handleTemplateClick(template)}
+                                            className="px-3 py-1.5 rounded-full bg-white border border-slate-200 text-xs text-slate-700 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 transition-colors"
+                                        >
+                                            {template}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
                         {messages.map((msg, idx) => (
                             <div key={idx} className={cn("flex gap-4", msg.role === 'user' ? "justify-end" : "justify-start")}>
                                 {msg.role !== 'user' && (
