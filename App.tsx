@@ -103,7 +103,7 @@ const App = () => {
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], links: [] });
   
   const [messages, setMessages] = useState<Message[]>([
-    { role: 'system', content: 'Welcome to the Knowledge Graph Chatbot. I can answer questions based on the documents you upload.', timestamp: Date.now() }
+    { role: 'system', content: 'Welcome to SecurityPlus Chatbot. I can answer queries related to IT Security.', timestamp: Date.now() }
   ]);
   const [inputMessage, setInputMessage] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -223,7 +223,7 @@ const App = () => {
         } else {
           // If no saved messages, keep the default welcome message
           setMessages([
-            { role: 'system', content: 'Welcome to the Knowledge Graph Chatbot. I can answer questions based on the documents you upload.', timestamp: Date.now() }
+            { role: 'system', content: 'Welcome to SecurityPlus Chatbot. I can answer queries related to IT Security.', timestamp: Date.now() }
           ]);
         }
       } catch (error) {
@@ -1271,7 +1271,7 @@ const App = () => {
                         size="sm" 
                         onClick={async () => {
                           setMessages([
-                            { role: 'system', content: 'Welcome to the Knowledge Graph Chatbot. I can answer questions based on the documents you upload.', timestamp: Date.now() }
+                            { role: 'system', content: 'Welcome to SecurityPlus Chatbot. I can answer queries related to IT Security.', timestamp: Date.now() }
                           ]);
                           // Clear from Firestore
                           if (appUser) {
