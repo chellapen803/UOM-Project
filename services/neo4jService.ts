@@ -45,6 +45,24 @@ export interface DocumentResponse {
   chunkCount?: number;
 }
 
+export interface GraphStats {
+  nodes: number;
+  relationships: number;
+  avgDegree: number;
+  density: number;
+  nodeLabels: { label: string; count: number }[];
+  relationTypes: { type: string; count: number }[];
+}
+
+export interface GraphMetrics {
+  top_k: number;
+  evaluated_nodes: number;
+  precision_at_k: number;
+  recall_at_k: number;
+  accuracy: number;
+  f1_score: number;
+}
+
 /**
  * Save extracted graph data to Neo4j
  * Includes timeout handling for large graphs
@@ -217,6 +235,49 @@ export async function saveDocumentToNeo4j(
 
   // If all batches succeeded, we treat the document as successfully saved.
   return { success: true };
+}
+
+/**
+ * Fetch high-level knowledge graph statistics from backend.
+ */
+export async function fetchGraphStats(): Promise<GraphStats> {
+  const headers = await getAuthHeaders();
+ 
+  const response = await fetch(`${API_BASE_URL}/graph/stats`, {
+    headers,
+  });
+ 
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: response.statusText }));
+    throw new Error(error.error || response.statusText);
+  }
+  return response.json();
+}
+
+/**
+ * Fetch model evaluation metrics (precision@k, recall@k, accuracy, F1) from backend.
+ * These are computed by the REEE / R-GCN embedding service.
+ */
+export async function fetchGraphMetrics(
+  topK: number = 10,
+  maxNodes: number = 100
+): Promise<GraphMetrics> {
+  const headers = await getAuthHeaders();
+  const params = new URLSearchParams({
+    k: String(topK),
+    maxNodes: String(maxNodes),
+  });
+
+  const response = await fetch(`${API_BASE_URL}/rag/metrics?${params.toString()}`, {
+    headers,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: response.statusText }));
+    throw new Error(error.error || response.statusText);
+  }
+
+  return response.json();
 }
 
 /**

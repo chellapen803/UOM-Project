@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { 
   Layout, Upload, Network, MessageSquare, Database, FileText, Share2, 
   Search, Bot, FileUp, X, Loader2, Image as ImageIcon, FileType2, 
-  Send, User, Settings, CheckCircle2, AlertCircle, LogOut, Shield, BookOpen
+  Send, User, Settings, CheckCircle2, AlertCircle, LogOut, Shield, BookOpen, BarChart2
 } from 'lucide-react';
 import { AppView, IngestedDocument, GraphData, Message } from './types';
 import GraphVisualizer from './components/GraphVisualizer';
@@ -17,7 +17,11 @@ import {
   loadDocumentsFromNeo4j,
   chatWithRAG,
   checkRGCNHealth,
-  RGCNHealthResponse
+  RGCNHealthResponse,
+  fetchGraphStats,
+  fetchGraphMetrics,
+  GraphStats,
+  GraphMetrics
 } from './services/neo4jService';
 import { 
   loadChatMessages, 
@@ -108,6 +112,10 @@ const App = () => {
   const [inputMessage, setInputMessage] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStatus, setProcessingStatus] = useState('');
+  const [graphStats, setGraphStats] = useState<GraphStats | null>(null);
+  const [modelMetrics, setModelMetrics] = useState<GraphMetrics | null>(null);
+  const [isLoadingMetrics, setIsLoadingMetrics] = useState(false);
+  const [metricsError, setMetricsError] = useState<string | null>(null);
   
   // Upload State
   const [uploadMode, setUploadMode] = useState<'text' | 'pdf' | 'url'>('text');
@@ -129,7 +137,7 @@ const App = () => {
     phase: ''
   });
   
-  // R-GCN Status
+  // REEE (Graph-Embedding Enhanced Retrieval) status
   const [rgcnStatus, setRgcnStatus] = useState<'active' | 'inactive' | 'checking'>('checking');
   const [rgcnStats, setRgcnStats] = useState<RGCNHealthResponse | null>(null);
   const [useRGCN, setUseRGCN] = useState<boolean>(true);
@@ -186,7 +194,7 @@ const App = () => {
     loadInitialDocuments();
   }, []);
 
-  // Check R-GCN status on mount and periodically
+  // Check REEE status on mount and periodically
   useEffect(() => {
     const checkRGCNStatus = async () => {
       try {
@@ -276,15 +284,15 @@ const App = () => {
     const query = content;
     setIsProcessing(true);
     
-    // If user has R-GCN disabled, skip the per-message health check and use standard messaging.
+    // If user has REEE disabled, skip the per-message health check and use standard messaging.
     if (useRGCN) {
-      setProcessingStatus('Checking R-GCN status...');
+      setProcessingStatus('Checking REEE status...');
       try {
         const health = await checkRGCNHealth();
         if (health.available) {
           setRgcnStatus('active');
           setRgcnStats(health);
-          setProcessingStatus('Analyzing with R-GCN...');
+          setProcessingStatus('Analyzing with REEE...');
         } else {
           setRgcnStatus('inactive');
           setRgcnStats(null);
@@ -807,6 +815,25 @@ const App = () => {
     }
   };
 
+  const handleRunMetrics = async () => {
+    setMetricsError(null);
+    setIsLoadingMetrics(true);
+    try {
+      const stats = await fetchGraphStats();
+      setGraphStats(stats);
+
+      // Use a fixed, sensible k and sample size for evaluation
+      const evaluation = await fetchGraphMetrics(10, 100);
+      setModelMetrics(evaluation);
+    } catch (error: any) {
+      console.error('Error fetching graph metrics:', error);
+      // Preserve any existing values but surface the error
+      setMetricsError(error.message || 'Failed to fetch graph metrics');
+    } finally {
+      setIsLoadingMetrics(false);
+    }
+  };
+
   // 3. CHAT
   const handleSendMessage = async () => {
     if (!inputMessage.trim()) return;
@@ -858,6 +885,7 @@ const App = () => {
               <NavItem view={AppView.ADMIN_UPLOAD} icon={Upload} label="Ingest Data" />
               <NavItem view={AppView.ADMIN_QUIZ_INGEST} icon={BookOpen} label="Ingest Quiz Data" />
               <NavItem view={AppView.ADMIN_GRAPH} icon={Network} label="Graph View" />
+              <NavItem view={AppView.ADMIN_METRICS} icon={BarChart2} label="Metrics" />
             </>
           )}
         </nav>
@@ -875,11 +903,11 @@ const App = () => {
                 <span>Nodes</span>
                 <span>{graphData.nodes.length}</span>
             </div>
-            {/* R-GCN Status */}
+            {/* REEE Status */}
             <div className="mt-3 pt-3 border-t border-slate-800">
                 <div className="flex items-center gap-2 mb-1">
                     <Network className="text-purple-500" size={12} />
-                    <span className="text-xs font-medium text-slate-300">R-GCN</span>
+                    <span className="text-xs font-medium text-slate-300">REEE</span>
                 </div>
                 <div className="flex items-center gap-2 text-xs">
                     <div className={`h-2 w-2 rounded-full ${rgcnStatus === 'active' ? 'bg-green-500 animate-pulse' : 'bg-slate-600'}`} />
@@ -1207,6 +1235,217 @@ const App = () => {
           )
         )}
 
+        {/* VIEW: METRICS */}
+        {currentView === AppView.ADMIN_METRICS && (
+          !isSuperuser() ? (
+            <div className="flex-1 flex items-center justify-center p-8">
+              <Card className="max-w-md">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <AlertCircle className="h-5 w-5 text-yellow-500" />
+                    Access Restricted
+                  </CardTitle>
+                  <CardDescription>
+                    Only superusers can view graph metrics.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-slate-600">
+                    You need superuser privileges to access the knowledge graph evaluation metrics.
+                    Please contact an administrator if you need access.
+                  </p>
+                </CardContent>
+                <CardFooter>
+                  <Button onClick={() => setCurrentView(AppView.USER_CHAT)} variant="outline" className="w-full">
+                    Go to Chat
+                  </Button>
+                </CardFooter>
+              </Card>
+            </div>
+          ) : (
+            <div className="flex-1 flex flex-col h-full bg-slate-50">
+              <header className="h-16 border-b bg-white px-6 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <BarChart2 className="text-blue-600" size={20} />
+                  <div>
+                    <h2 className="font-semibold">Knowledge Graph Metrics</h2>
+                    <p className="text-xs text-slate-500">
+                      High-level statistics computed directly from the Neo4j knowledge graph.
+                    </p>
+                  </div>
+                </div>
+              </header>
+              <div className="flex-1 p-6 overflow-y-auto">
+                <div className="max-w-3xl mx-auto space-y-6">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg">Graph Statistics</CardTitle>
+                      <CardDescription>
+                        View node and relationship counts, average degree, density, and label/type breakdowns.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      {metricsError && (
+                        <Alert variant="destructive">
+                          <AlertCircle className="h-4 w-4" />
+                          <AlertTitle>Error</AlertTitle>
+                          <AlertDescription>{metricsError}</AlertDescription>
+                        </Alert>
+                      )}
+                      <div className="flex items-center gap-4">
+                        <Button
+                          onClick={handleRunMetrics}
+                          disabled={isLoadingMetrics}
+                        >
+                          {isLoadingMetrics && (
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          )}
+                          {isLoadingMetrics ? 'Refreshing...' : 'Refresh Metrics'}
+                        </Button>
+                      </div>
+                    </CardContent>
+                    {graphStats && (
+                      <CardFooter className="border-t bg-slate-50 flex flex-col gap-6 p-6">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                          <div>
+                            <p className="text-xs text-slate-500">Nodes</p>
+                            <p className="text-lg font-semibold">
+                              {graphStats.nodes.toLocaleString()}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-slate-500">Relationships</p>
+                            <p className="text-lg font-semibold">
+                              {graphStats.relationships.toLocaleString()}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-slate-500">Average Degree</p>
+                            <p className="text-lg font-semibold">
+                              {graphStats.avgDegree.toFixed(2)}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-slate-500">Density</p>
+                            <p className="text-lg font-semibold">
+                              {(graphStats.density * 100).toFixed(3)}%
+                            </p>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          <div>
+                            <p className="text-xs font-semibold text-slate-500 mb-2">
+                              Top Node Labels
+                            </p>
+                            {graphStats.nodeLabels.length === 0 ? (
+                              <p className="text-xs text-slate-400">No labels found.</p>
+                            ) : (
+                              <div className="space-y-1 text-xs text-slate-600">
+                                {graphStats.nodeLabels.map((l) => (
+                                  <div key={l.label} className="flex justify-between">
+                                    <span>{l.label}</span>
+                                    <span>{l.count.toLocaleString()}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          <div>
+                            <p className="text-xs font-semibold text-slate-500 mb-2">
+                              Top Relationship Types
+                            </p>
+                            {graphStats.relationTypes.length === 0 ? (
+                              <p className="text-xs text-slate-400">No relationships found.</p>
+                            ) : (
+                              <div className="space-y-1 text-xs text-slate-600">
+                                {graphStats.relationTypes.map((r) => (
+                                  <div key={r.type} className="flex justify-between">
+                                    <span>{r.type}</span>
+                                    <span>{r.count.toLocaleString()}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </CardFooter>
+                    )}
+                    {!graphStats && !isLoadingMetrics && !metricsError && (
+                      <CardFooter className="border-t bg-slate-50 p-6">
+                        <p className="text-xs text-slate-500">
+                          No metrics loaded yet. Click &quot;Refresh Metrics&quot; to fetch the latest statistics from Neo4j.
+                        </p>
+                      </CardFooter>
+                    )}
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg">REEE Model Evaluation</CardTitle>
+                      <CardDescription>
+                        Precision@k, Recall@k, Accuracy, and F1 score for link prediction using R-GCN graph embeddings (k = 10).
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      {metricsError && (
+                        <Alert variant="destructive">
+                          <AlertCircle className="h-4 w-4" />
+                          <AlertTitle>Error</AlertTitle>
+                          <AlertDescription>{metricsError}</AlertDescription>
+                        </Alert>
+                      )}
+                      <p className="text-xs text-slate-500">
+                        Metrics are computed on a sampled subset of nodes ({`maxNodes = 100`}) using the current REEE / R-GCN model.
+                      </p>
+                    </CardContent>
+                    {modelMetrics && (
+                      <CardFooter className="border-t bg-slate-50 flex flex-col gap-4 p-6">
+                        <p className="text-xs text-slate-500">
+                          Evaluated on {modelMetrics.evaluated_nodes} node
+                          {modelMetrics.evaluated_nodes === 1 ? '' : 's'} with k = {modelMetrics.top_k}.
+                        </p>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                          <div>
+                            <p className="text-xs text-slate-500">Precision@k</p>
+                            <p className="text-lg font-semibold">
+                              {(modelMetrics.precision_at_k * 100).toFixed(1)}%
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-slate-500">Recall@k</p>
+                            <p className="text-lg font-semibold">
+                              {(modelMetrics.recall_at_k * 100).toFixed(1)}%
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-slate-500">Accuracy</p>
+                            <p className="text-lg font-semibold">
+                              {(modelMetrics.accuracy * 100).toFixed(1)}%
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-slate-500">F1 Score</p>
+                            <p className="text-lg font-semibold">
+                              {(modelMetrics.f1_score * 100).toFixed(1)}%
+                            </p>
+                          </div>
+                        </div>
+                      </CardFooter>
+                    )}
+                    {!modelMetrics && !isLoadingMetrics && !metricsError && (
+                      <CardFooter className="border-t bg-slate-50 p-6">
+                        <p className="text-xs text-slate-500">
+                          No evaluation run yet. Click &quot;Refresh Metrics&quot; to compute REEE model performance on the current graph.
+                        </p>
+                      </CardFooter>
+                    )}
+                  </Card>
+                </div>
+              </div>
+            </div>
+          )
+        )}
+
         {/* VIEW: QUIZ */}
         {currentView === AppView.ADMIN_QUIZ_INGEST && (
           <IngestQuizData />
@@ -1228,26 +1467,26 @@ const App = () => {
                             <h2 className="font-semibold text-slate-900 leading-tight">Assistant</h2>
                             <div className="flex items-center gap-2">
                                 <p className="text-xs text-slate-500">Gemini 2.5 • RAG Enabled</p>
-                                {/* R-GCN Status Badge */}
+                                {/* REEE Status Badge */}
                                 {rgcnStatus === 'active' && (
                                     <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-green-500 text-green-600">
                                         <div className="h-1.5 w-1.5 rounded-full bg-green-500 mr-1 animate-pulse" />
-                                        R-GCN
+                                        REEE
                                     </Badge>
                                 )}
                                 {rgcnStatus === 'inactive' && (
                                     <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-slate-300 text-slate-400">
                                         <div className="h-1.5 w-1.5 rounded-full bg-slate-300 mr-1" />
-                                        R-GCN Offline
+                                        REEE Offline
                                     </Badge>
                                 )}
                             </div>
                         </div>
                     </div>
                     <div className="flex items-center gap-4">
-                      {/* R-GCN Toggle */}
+                      {/* REEE Toggle */}
                       <div className="flex items-center gap-2">
-                        <span className="text-xs text-slate-500 hidden sm:inline">R-GCN Retrieval</span>
+                        <span className="text-xs text-slate-500 hidden sm:inline">REEE Retrieval</span>
                         <button
                           type="button"
                           onClick={() => setUseRGCN((prev) => !prev)}
@@ -1256,7 +1495,7 @@ const App = () => {
                             useRGCN ? "bg-purple-500" : "bg-slate-300"
                           )}
                           aria-pressed={useRGCN}
-                          aria-label="Toggle R-GCN retrieval"
+                          aria-label="Toggle REEE retrieval"
                         >
                           <span
                             className={cn(
@@ -1340,18 +1579,18 @@ const App = () => {
                                                 <summary className="list-none text-slate-400 hover:text-blue-600 cursor-pointer flex items-center gap-1 font-medium select-none">
                                                     <Search size={10} />
                                                     View Sources
-                                                    {/* Show R-GCN indicator */}
+                                                    {/* Show REEE indicator */}
                                                     {msg.metadata?.rgcnUsed && (
                                                         <Badge variant="outline" className="ml-2 text-[9px] px-1 border-purple-300 text-purple-600">
-                                                            R-GCN Enhanced
+                                                            REEE Enhanced
                                                         </Badge>
                                                     )}
                                                 </summary>
                                                 <div className="mt-2 p-3 bg-slate-50 rounded-lg border border-slate-100 text-slate-500 space-y-2 animate-in fade-in zoom-in-95 duration-200">
-                                                    {/* Show R-GCN similarity scores if available */}
+                                                    {/* Show REEE similarity scores if available */}
                                                     {msg.metadata?.rgcnSimilarities && msg.metadata.rgcnSimilarities.length > 0 && (
                                                         <div className="mb-2 pb-2 border-b border-slate-200">
-                                                            <p className="text-[10px] font-semibold text-purple-600 mb-1">R-GCN Similarity Scores:</p>
+                                                            <p className="text-[10px] font-semibold text-purple-600 mb-1">REEE Similarity Scores:</p>
                                                             {msg.metadata.rgcnSimilarities.map((sim: any, i: number) => (
                                                                 <div key={i} className="text-[10px] flex justify-between">
                                                                     <span className="truncate">{sim.entity}</span>

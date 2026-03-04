@@ -17,9 +17,9 @@ User Upload (Text/PDF)
     ↓
 Knowledge Graph (Nodes & Links)
     ↓
-[Chat Interface] → RAG Retrieval → [Gemini API] → Response
+[Chat Interface] → RAG Retrieval (optionally REEE-enhanced) → [Gemini API] → Response
          ↓
-    [R-GCN Service] (localhost:8000) - Optional semantic enhancement
+    [REEE Service] (localhost:8000) - Optional graph-embedding enhanced retrieval (uses R-GCN encoder)
 ```
 
 ### Production Deployment
@@ -32,15 +32,15 @@ Backend API (Vercel Serverless)
 │  Neo4j Aura     │ (Cloud Database)
 └─────────────────┘
     ↓
-┌─────────────────┐
-│ R-GCN Service   │ (Render.com) - Python ML Service
-│ FastAPI         │
-└─────────────────┘
+┌───────────────────────────────┐
+│ REEE Service (R-GCN Encoder) │ (Render.com) - Python ML Service
+│ FastAPI                       │
+└───────────────────────────────┘
     ↓
-[Chat Interface] → RAG Retrieval (with R-GCN enhancement) → [Gemini API] → Response
+[Chat Interface] → RAG Retrieval (with REEE enhancement) → [Gemini API] → Response
 ```
 
-**Note**: In production, the R-GCN service runs on Render.com because Vercel serverless functions are not suitable for long-running Python services with heavy ML dependencies. The service maintains persistent connections to Neo4j and keeps the trained model loaded in memory.
+**Note**: In production, the REEE service (which uses an R-GCN model to generate graph embeddings) runs on Render.com because Vercel serverless functions are not suitable for long-running Python services with heavy ML dependencies. The service maintains persistent connections to Neo4j and keeps the trained model loaded in memory.
 
 ---
 
@@ -226,11 +226,11 @@ Backend API (Vercel Serverless)
 - **Backend Service**: `ragService.js` uses Neo4j Cypher queries
 
 **Enhanced RAG Retrieval Strategy**:
-1. **R-GCN Enhanced Retrieval** (if available):
-   - Checks if R-GCN service is available (hosted on Render.com)
-   - Uses semantic embeddings to find similar entities
+1. **REEE (Graph-Embedding Enhanced Retrieval)** (if available):
+   - Checks if the REEE service is available (hosted on Render.com)
+   - Uses R-GCN–based graph embeddings to find similar entities
    - Leverages graph structure for better context matching
-   - Falls back to standard retrieval if R-GCN unavailable
+   - Falls back to standard retrieval if REEE is unavailable
 
 2. **Graph-Based Entity Search**:
    - Queries Neo4j for entities matching query keywords
@@ -244,7 +244,7 @@ Backend API (Vercel Serverless)
 4. **Graph Summary Fallback**:
    - If still no matches, returns list of known entities from graph
 
-**Result**: Returns top 3 most relevant text chunks from Neo4j (enhanced with R-GCN semantic similarity if available)
+**Result**: Returns top 3 most relevant text chunks from Neo4j (enhanced with REEE’s graph embeddings if available)
 
 #### Step 12: Generate Response with Gemini
 - **Function**: `generateRAGResponse()` in `geminiService.ts`

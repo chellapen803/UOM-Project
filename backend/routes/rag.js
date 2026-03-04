@@ -1,8 +1,8 @@
 import express from 'express';
 import { retrieveContext, findRelatedEntities, extractKeywords } from '../services/ragService.js';
 import { generateRAGResponse, cleanContextChunks } from '../services/geminiService.js';
-import { verifyToken, requireAuth } from '../middleware/auth.js';
-import { checkRGCNHealth, retrieveContextWithRGCN } from '../services/rgcnService.js';
+import { verifyToken, requireAuth, requireSuperuser } from '../middleware/auth.js';
+import { checkRGCNHealth, retrieveContextWithRGCN, evaluateGraphMetrics } from '../services/rgcnService.js';
 
 /**
  * Intelligently extract relevant answer from context chunks without LLM
@@ -283,6 +283,19 @@ router.get('/rgcn-health', verifyToken, requireAuth, async (req, res) => {
       available: false, 
       error: error.message || 'Service unavailable' 
     });
+  }
+});
+
+// Knowledge graph metrics (admin only)
+router.get('/metrics', verifyToken, requireSuperuser, async (req, res) => {
+  try {
+    const topK = parseInt(req.query.k, 10) || 10;
+    const maxNodes = parseInt(req.query.maxNodes, 10) || 100;
+    const metrics = await evaluateGraphMetrics(topK, maxNodes);
+    res.json(metrics);
+  } catch (error) {
+    console.error('Error getting graph metrics:', error);
+    res.status(500).json({ error: error.message || 'Failed to compute graph metrics' });
   }
 });
 

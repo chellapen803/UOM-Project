@@ -103,6 +103,39 @@ export async function findSimilarEntities(entityId, topK = 10) {
 }
 
 /**
+ * Evaluate knowledge graph metrics (precision@k, recall@k, accuracy, F1).
+ */
+export async function evaluateGraphMetrics(topK = 10, maxNodes = 100) {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), RGCN_TIMEOUT * 4);
+
+    const response = await fetch(`${PYTHON_RGCN_URL}/evaluate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ top_k: topK, max_nodes: maxNodes }),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: response.statusText }));
+      throw new Error(error.error || `R-GCN service error: ${response.statusText}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      console.warn('[R-GCN] Metrics evaluation timeout');
+    } else {
+      console.warn(`[R-GCN] Failed to evaluate graph metrics: ${error.message}`);
+    }
+    throw error;
+  }
+}
+
+/**
  * Enhanced RAG retrieval using R-GCN embeddings
  */
 export async function retrieveContextWithRGCN(query, extractKeywords) {

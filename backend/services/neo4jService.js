@@ -139,6 +139,94 @@ export async function getGraphData() {
 }
 
 /**
+ * Get high-level graph statistics for admin metrics.
+ * Excludes Document and Chunk nodes/relationships.
+ */
+export async function getGraphStats() {
+  const session = driver.session();
+
+  try {
+    // 1) Total nodes (excluding Document/Chunk)
+    const nodeResult = await session.run(`
+      MATCH (n)
+      WHERE NOT n:Document AND NOT n:Chunk
+      RETURN count(n) as nodes
+    `);
+
+    const nodes = nodeResult.records[0]?.get('nodes')?.toNumber() || 0;
+
+    // 2) Total relationships and relation type counts (excluding Document/Chunk)
+    const relResult = await session.run(`
+      MATCH (a)-[r]->(b)
+      WHERE NOT a:Document AND NOT a:Chunk
+        AND NOT b:Document AND NOT b:Chunk
+      RETURN count(r) as relationships
+    `);
+
+    const relationships = relResult.records[0]?.get('relationships')?.toNumber() || 0;
+
+    const relTypeResult = await session.run(`
+      MATCH (a)-[r]->(b)
+      WHERE NOT a:Document AND NOT a:Chunk
+        AND NOT b:Document AND NOT b:Chunk
+      RETURN type(r) as type, count(r) as count
+      ORDER BY count DESC
+      LIMIT 20
+    `);
+
+    const relationTypes = relTypeResult.records.map(record => ({
+      type: record.get('type'),
+      count: record.get('count')?.toNumber() || 0
+    }));
+
+    // 3) Node labels and counts (excluding Document/Chunk)
+    const labelResult = await session.run(`
+      MATCH (n)
+      WHERE NOT n:Document AND NOT n:Chunk
+      WITH labels(n) as labels
+      UNWIND labels as label
+      RETURN label, count(*) as count
+      ORDER BY count DESC
+      LIMIT 20
+    `);
+
+    const nodeLabels = labelResult.records.map(record => ({
+      label: record.get('label'),
+      count: record.get('count')?.toNumber() || 0
+    }));
+
+    // 4) Average degree and density (treating relationships as undirected for degree)
+    let avgDegree = 0;
+    let density = 0;
+
+    if (nodes > 0) {
+      // Each relationship contributes 2 to sum of degrees if treated undirected
+      avgDegree = relationships > 0 ? (2 * relationships) / nodes : 0;
+      if (nodes > 1) {
+        const possibleEdges = (nodes * (nodes - 1)) / 2;
+        density = possibleEdges > 0 ? relationships / possibleEdges : 0;
+      } else {
+        density = 0;
+      }
+    }
+
+    return {
+      nodes,
+      relationships,
+      avgDegree,
+      density,
+      nodeLabels,
+      relationTypes
+    };
+  } catch (error) {
+    console.error('Error loading graph stats:', error);
+    throw error;
+  } finally {
+    await session.close();
+  }
+}
+
+/**
  * Save document and chunks
  * Uses batch operations with UNWIND for performance (critical for large PDFs)
  */

@@ -1,5 +1,5 @@
 import express from 'express';
-import { saveGraphData, getGraphData } from '../services/neo4jService.js';
+import { saveGraphData, getGraphData, getGraphStats } from '../services/neo4jService.js';
 import { verifyToken, requireSuperuser, requireAuth } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -28,6 +28,17 @@ router.get('/load', verifyToken, requireAuth, async (req, res) => {
     res.json(graphData);
   } catch (error) {
     console.error('Error loading graph:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Graph statistics for admin metrics - requires superuser
+router.get('/stats', verifyToken, requireSuperuser, async (req, res) => {
+  try {
+    const stats = await getGraphStats();
+    res.json(stats);
+  } catch (error) {
+    console.error('Error loading graph stats:', error);
     res.status(500).json({ error: error.message });
   }
 });

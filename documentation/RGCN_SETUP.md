@@ -1,8 +1,13 @@
-# R-GCN Setup Guide
+# REEE / R-GCN Embedding Service Setup Guide
 
 ## Overview
 
-R-GCN (Relational Graph Convolutional Network) is a Python microservice that enhances the knowledge graph RAG system with semantic embeddings. It learns node embeddings from the graph structure, enabling better entity similarity search and improved context retrieval.
+This Python microservice implements an R-GCN (Relational Graph Convolutional Network) model and exposes **graph embeddings** that are used by the application’s **REEE (Graph-Embedding Enhanced Retrieval)** pipeline.
+
+Instead of acting as a standalone classifier, the R-GCN model here is used as an **encoder**:
+
+- It learns node embeddings from the graph structure.
+- Those embeddings are then used to improve entity similarity search and context retrieval in the RAG system.
 
 ## Architecture
 
@@ -17,7 +22,7 @@ Express Backend (Node.js)
 └─────────────────┘
     ↓
 ┌─────────────────┐
-│ Python R-GCN    │ (Embedding Service)
+│ Python REEE     │ (R-GCN Embedding Service)
 │ FastAPI Service │ (localhost:8000)
 └─────────────────┘
 ```
@@ -31,12 +36,12 @@ Frontend + Backend (Vercel)
 └─────────────────┘
     ↓
 ┌─────────────────┐
-│ Python R-GCN    │ (Render.com)
+│ Python REEE     │ (Render.com, R-GCN Encoder)
 │ FastAPI Service │ (Hosted separately)
 └─────────────────┘
 ```
 
-**Note**: In production, the R-GCN service is hosted separately on Render.com because:
+**Note**: In production, the REEE service is hosted separately on Render.com because:
 - Vercel serverless functions are not suitable for long-running Python services with heavy dependencies (PyTorch)
 - Render provides better support for Python applications with persistent state
 - The service needs to maintain connections to Neo4j and keep the model loaded in memory
@@ -308,10 +313,10 @@ Returns usage statistics.
 ## Integration with Express Backend
 
 The Express backend automatically:
-1. Checks R-GCN service health on startup
-2. Uses R-GCN enhanced retrieval when available
-3. Falls back to standard retrieval if R-GCN is unavailable
-4. Includes R-GCN metadata in chat responses
+1. Checks REEE service health on startup
+2. Uses REEE (R-GCN–based graph embeddings) for enhanced retrieval when available
+3. Falls back to standard retrieval if REEE is unavailable
+4. Includes REEE metadata in chat responses
 
 No additional configuration needed beyond setting `PYTHON_RGCN_URL`.
 
