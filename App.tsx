@@ -1408,25 +1408,25 @@ const App = () => {
                           <div>
                             <p className="text-xs text-slate-500">Precision@k</p>
                             <p className="text-lg font-semibold">
-                              {(modelMetrics.precision_at_k * 100).toFixed(1)}%
+                              {(modelMetrics.precision_at_k * 100).toFixed(3)}%
                             </p>
                           </div>
                           <div>
                             <p className="text-xs text-slate-500">Recall@k</p>
                             <p className="text-lg font-semibold">
-                              {(modelMetrics.recall_at_k * 100).toFixed(1)}%
+                              {(modelMetrics.recall_at_k * 100).toFixed(3)}%
                             </p>
                           </div>
                           <div>
                             <p className="text-xs text-slate-500">Accuracy</p>
                             <p className="text-lg font-semibold">
-                              {(modelMetrics.accuracy * 100).toFixed(1)}%
+                              {(modelMetrics.accuracy * 100).toFixed(3)}%
                             </p>
                           </div>
                           <div>
                             <p className="text-xs text-slate-500">F1 Score</p>
                             <p className="text-lg font-semibold">
-                              {(modelMetrics.f1_score * 100).toFixed(1)}%
+                              {(modelMetrics.f1_score * 100).toFixed(3)}%
                             </p>
                           </div>
                         </div>
