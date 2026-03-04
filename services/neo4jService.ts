@@ -2,6 +2,7 @@ import { GraphData, Node, Link } from '../types';
 import { auth } from '../config/firebase';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+const RGCN_URL = import.meta.env.VITE_RGCN_URL || '';
 
 /**
  * Get authorization header with Firebase ID token
@@ -262,14 +263,14 @@ export async function fetchGraphMetrics(
   topK: number = 10,
   maxNodes: number = 100
 ): Promise<GraphMetrics> {
-  const headers = await getAuthHeaders();
-  const params = new URLSearchParams({
-    k: String(topK),
-    maxNodes: String(maxNodes),
-  });
+  if (!RGCN_URL) {
+    throw new Error('RGCN service URL not configured (VITE_RGCN_URL).');
+  }
 
-  const response = await fetch(`${API_BASE_URL}/rag/metrics?${params.toString()}`, {
-    headers,
+  const response = await fetch(`${RGCN_URL}/evaluate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ top_k: topK, max_nodes: maxNodes }),
   });
 
   if (!response.ok) {
