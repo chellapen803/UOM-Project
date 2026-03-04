@@ -6,7 +6,8 @@
 import driver from '../config/neo4j.js';
 
 const PYTHON_RGCN_URL = process.env.PYTHON_RGCN_URL || 'http://localhost:8000';
-const RGCN_TIMEOUT = 3000; // 3 seconds timeout
+const RGCN_TIMEOUT = 3000; // 3 seconds timeout for quick operations (health, small calls)
+const RGCN_METRICS_TIMEOUT = 60000; // 60 seconds timeout for heavy evaluation
 
 /**
  * Check if R-GCN service is available
@@ -108,7 +109,7 @@ export async function findSimilarEntities(entityId, topK = 10) {
 export async function evaluateGraphMetrics(topK = 10, maxNodes = 100) {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), RGCN_TIMEOUT * 4);
+    const timeoutId = setTimeout(() => controller.abort(), RGCN_METRICS_TIMEOUT);
 
     const response = await fetch(`${PYTHON_RGCN_URL}/evaluate`, {
       method: 'POST',
