@@ -257,7 +257,7 @@ export async function fetchGraphStats(): Promise<GraphStats> {
 
 /**
  * Fetch model evaluation metrics (precision@k, recall@k, accuracy, F1) from backend.
- * These are computed by the REEE / R-GCN embedding service.
+ * These are computed by the GEER / R-GCN embedding service.
  */
 export async function fetchGraphMetrics(
   topK: number = 10,

@@ -11,15 +11,15 @@ Deploy both frontend and backend on Vercel as serverless functions:
 - **Frontend**: Static React app (Vite build)
 - **Backend**: Express API as serverless functions
 - **Neo4j**: Must be hosted separately (Neo4j Aura recommended)
-- **REEE Service**: Must be hosted separately on Render.com (Python ML service exposing R-GCN graph embeddings)
+- **GEER Service**: Must be hosted separately on Render.com (Python ML service exposing R-GCN graph embeddings)
 
 **See [VERCEL_DEPLOYMENT.md](./VERCEL_DEPLOYMENT.md) for complete step-by-step instructions.**
 
-**Note**: The REEE Python service is deployed separately on Render.com because Vercel serverless functions are not suitable for long-running Python services with heavy ML dependencies. The Node.js backend on Vercel connects to Render via the `PYTHON_RGCN_URL` environment variable.
+**Note**: The GEER Python service is deployed separately on Render.com because Vercel serverless functions are not suitable for long-running Python services with heavy ML dependencies. The Node.js backend on Vercel connects to Render via the `PYTHON_RGCN_URL` environment variable.
 
-### REEE / R-GCN Service Hosting
+### GEER / R-GCN Service Hosting
 
-The REEE Python service (R-GCN encoder for graph embeddings) is hosted separately on **Render.com**:
+The GEER Python service (R-GCN encoder for graph embeddings) is hosted separately on **Render.com**:
 
 - **Why Render?**: Vercel serverless functions are not suitable for long-running Python services with heavy ML dependencies (PyTorch)
 - **Connection**: Node.js backend on Vercel connects to Render via `PYTHON_RGCN_URL` environment variable

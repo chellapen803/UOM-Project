@@ -25,11 +25,11 @@ PYTHON_RGCN_URL=https://your-rgcn-service.onrender.com
 
 **Important:**
 - Replace `your_gemini_api_key_here` with your actual Gemini API key
-- Replace `your-rgcn-service.onrender.com` with your Render REEE (R-GCN embedding) service URL (optional - omit if not using REEE)
+- Replace `your-rgcn-service.onrender.com` with your Render GEER (R-GCN embedding) service URL (optional - omit if not using GEER)
 - Set each variable for all three environments (Production, Preview, Development)
 - The backend supports both `NEO4J_USER` and `NEO4J_USERNAME`
 
-**Note**: `PYTHON_RGCN_URL` is optional. If you haven't deployed the REEE service yet, you can omit this variable. The app will work without graph-embedding enhanced retrieval (using standard retrieval only). See [RGCN_SETUP.md](./RGCN_SETUP.md) for REEE/R-GCN deployment instructions.
+**Note**: `PYTHON_RGCN_URL` is optional. If you haven't deployed the GEER service yet, you can omit this variable. The app will work without graph-embedding enhanced retrieval (using standard retrieval only). See [RGCN_SETUP.md](./RGCN_SETUP.md) for GEER/R-GCN deployment instructions.
 
 ## Step 3: Add Frontend Environment Variables
 
@@ -72,12 +72,12 @@ After your first successful deployment:
 - [ ] Add Neo4j credentials (NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD, NEO4J_DATABASE)
 - [ ] Add GEMINI_API_KEY
 - [ ] Add VITE_API_URL (placeholder - update after first deploy)
-- [ ] (Optional) Add PYTHON_RGCN_URL if using the REEE (R-GCN embedding) service on Render
+- [ ] (Optional) Add PYTHON_RGCN_URL if using the GEER (R-GCN embedding) service on Render
 - [ ] Deploy to Vercel
 - [ ] Update VITE_API_URL with actual deployment URL
 - [ ] Test health endpoint: `https://your-project.vercel.app/api/health`
 - [ ] Test document upload and graph creation
-- [ ] (If using REEE) Verify the REEE service is accessible and the frontend shows the REEE badge
+- [ ] (If using GEER) Verify the GEER service is accessible and the frontend shows the GEER badge
 
 ## Testing After Deployment
 

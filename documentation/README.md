@@ -11,7 +11,7 @@ A Knowledge Graph-based Retrieval-Augmented Generation (RAG) application that ex
 - 💬 **Intelligent Chatbot**: Ask questions about your documents with RAG-powered responses
 - 🗄️ **Neo4j Integration**: Persistent storage in Neo4j graph database
 - 📊 **Graph Visualization**: Interactive D3.js force-directed graph visualization
-- 🧠 **REEE (Graph-Embedding Enhanced Retrieval)**: Optional R-GCN–based graph embeddings for improved context retrieval (Python microservice)
+- 🧠 **GEER (Graph-Embedding Enhanced Retrieval)**: Optional R-GCN–based graph embeddings for improved context retrieval (Python microservice)
 
 ## Tech Stack
 
@@ -21,7 +21,7 @@ A Knowledge Graph-based Retrieval-Augmented Generation (RAG) application that ex
 - **NLP**: Compromise.js (client-side entity extraction)
 - **LLM**: Google Gemini API (for chatbot responses)
 - **Visualization**: D3.js (force-directed graph)
-- **ML/AI**: REEE service using an R-GCN (Relational Graph Convolutional Network) encoder - Optional Python microservice for graph embeddings
+- **ML/AI**: GEER service using an R-GCN (Relational Graph Convolutional Network) encoder - Optional Python microservice for graph embeddings
 
 ## Quick Start
 
@@ -30,7 +30,7 @@ A Knowledge Graph-based Retrieval-Augmented Generation (RAG) application that ex
 - Node.js (v18+)
 - Neo4j (Docker or Neo4j Desktop)
 - Gemini API key
-- Python 3.8+ (optional, for REEE / R-GCN embedding service)
+- Python 3.8+ (optional, for GEER / R-GCN embedding service)
 
 ### Installation
 
@@ -69,7 +69,7 @@ A Knowledge Graph-based Retrieval-Augmented Generation (RAG) application that ex
    NEO4J_USER=neo4j
    NEO4J_PASSWORD=yourpassword
    PORT=3001
-   PYTHON_RGCN_URL=http://localhost:8000  # Optional: REEE (R-GCN embedding) service URL
+   PYTHON_RGCN_URL=http://localhost:8000  # Optional: GEER (R-GCN embedding) service URL
    ```
    
    Create `.env.local` (in root):
@@ -89,7 +89,7 @@ A Knowledge Graph-based Retrieval-Augmented Generation (RAG) application that ex
    npm run dev
    ```
 
-7. **Optional: Start REEE / R-GCN embedding service** (for graph-embedding enhanced retrieval)
+7. **Optional: Start GEER / R-GCN embedding service** (for graph-embedding enhanced retrieval)
    ```bash
    cd backend/python-rgcn
    pip install -r requirements.txt
@@ -97,7 +97,7 @@ A Knowledge Graph-based Retrieval-Augmented Generation (RAG) application that ex
    ```
    See [RGCN_SETUP.md](./RGCN_SETUP.md) for detailed setup instructions.
    
-   **Note**: In production, the REEE service is deployed separately on Render.com. See [RGCN_SETUP.md](./RGCN_SETUP.md) for deployment instructions.
+   **Note**: In production, the GEER service is deployed separately on Render.com. See [RGCN_SETUP.md](./RGCN_SETUP.md) for deployment instructions.
 
 8. **Open the app**
    - Frontend: http://localhost:5173 (or the port Vite assigns)
@@ -156,7 +156,7 @@ UOM-Project/
 4. **Graph Building**: Entities become nodes, relationships become links in the knowledge graph
 5. **Storage**: Graph data is saved to Neo4j for persistence
 6. **Visualization**: D3.js renders an interactive graph visualization
-7. **REEE Graph-Embedding Enhancement** (optional): Python service uses an R-GCN model to learn graph embeddings for better retrieval
+7. **GEER Graph-Embedding Enhancement** (optional): Python service uses an R-GCN model to learn graph embeddings for better retrieval
    - **Local**: Runs on `localhost:8000`
    - **Production**: Deployed separately on Render.com (connected via `PYTHON_RGCN_URL`)
 8. **Chatbot**: Users can ask questions; RAG retrieves relevant context from Neo4j (with optional R-GCN enhancement), Gemini generates responses

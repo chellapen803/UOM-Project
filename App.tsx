@@ -137,7 +137,7 @@ const App = () => {
     phase: ''
   });
   
-  // REEE (Graph-Embedding Enhanced Retrieval) status
+  // GEER (Graph-Embedding Enhanced Retrieval) status
   const [rgcnStatus, setRgcnStatus] = useState<'active' | 'inactive' | 'checking'>('checking');
   const [rgcnStats, setRgcnStats] = useState<RGCNHealthResponse | null>(null);
   const [useRGCN, setUseRGCN] = useState<boolean>(true);
@@ -194,7 +194,7 @@ const App = () => {
     loadInitialDocuments();
   }, []);
 
-  // Check REEE status on mount and periodically
+  // Check GEER status on mount and periodically
   useEffect(() => {
     const checkRGCNStatus = async () => {
       try {
@@ -284,15 +284,15 @@ const App = () => {
     const query = content;
     setIsProcessing(true);
     
-    // If user has REEE disabled, skip the per-message health check and use standard messaging.
+    // If user has GEER disabled, skip the per-message health check and use standard messaging.
     if (useRGCN) {
-      setProcessingStatus('Checking REEE status...');
+      setProcessingStatus('Checking GEER status...');
       try {
         const health = await checkRGCNHealth();
         if (health.available) {
           setRgcnStatus('active');
           setRgcnStats(health);
-          setProcessingStatus('Analyzing with REEE...');
+          setProcessingStatus('Analyzing with GEER...');
         } else {
           setRgcnStatus('inactive');
           setRgcnStats(null);
@@ -903,11 +903,11 @@ const App = () => {
                 <span>Nodes</span>
                 <span>{graphData.nodes.length}</span>
             </div>
-            {/* REEE Status */}
+            {/* GEER Status */}
             <div className="mt-3 pt-3 border-t border-slate-800">
                 <div className="flex items-center gap-2 mb-1">
                     <Network className="text-purple-500" size={12} />
-                    <span className="text-xs font-medium text-slate-300">REEE</span>
+                    <span className="text-xs font-medium text-slate-300">GEER</span>
                 </div>
                 <div className="flex items-center gap-2 text-xs">
                     <div className={`h-2 w-2 rounded-full ${rgcnStatus === 'active' ? 'bg-green-500 animate-pulse' : 'bg-slate-600'}`} />
@@ -1381,7 +1381,7 @@ const App = () => {
 
                   <Card>
                     <CardHeader>
-                      <CardTitle className="text-lg">REEE Model Evaluation</CardTitle>
+                      <CardTitle className="text-lg">GEER Model Evaluation</CardTitle>
                       <CardDescription>
                         Precision@k, Recall@k, Accuracy, and F1 score for link prediction using R-GCN graph embeddings (k = 10).
                       </CardDescription>
@@ -1395,7 +1395,7 @@ const App = () => {
                         </Alert>
                       )}
                       <p className="text-xs text-slate-500">
-                        Metrics are computed on a sampled subset of nodes ({`maxNodes = 100`}) using the current REEE / R-GCN model.
+                        Metrics are computed on a sampled subset of nodes ({`maxNodes = 100`}) using the current GEER / R-GCN model.
                       </p>
                     </CardContent>
                     {modelMetrics && (
@@ -1435,7 +1435,7 @@ const App = () => {
                     {!modelMetrics && !isLoadingMetrics && !metricsError && (
                       <CardFooter className="border-t bg-slate-50 p-6">
                         <p className="text-xs text-slate-500">
-                          No evaluation run yet. Click &quot;Refresh Metrics&quot; to compute REEE model performance on the current graph.
+                          No evaluation run yet. Click &quot;Refresh Metrics&quot; to compute GEER model performance on the current graph.
                         </p>
                       </CardFooter>
                     )}
@@ -1466,27 +1466,27 @@ const App = () => {
                         <div>
                             <h2 className="font-semibold text-slate-900 leading-tight">Assistant</h2>
                             <div className="flex items-center gap-2">
-                                <p className="text-xs text-slate-500">Gemini 2.5 • RAG Enabled</p>
-                                {/* REEE Status Badge */}
-                                {rgcnStatus === 'active' && (
-                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-green-500 text-green-600">
-                                        <div className="h-1.5 w-1.5 rounded-full bg-green-500 mr-1 animate-pulse" />
-                                        REEE
-                                    </Badge>
-                                )}
-                                {rgcnStatus === 'inactive' && (
-                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-slate-300 text-slate-400">
-                                        <div className="h-1.5 w-1.5 rounded-full bg-slate-300 mr-1" />
-                                        REEE Offline
-                                    </Badge>
-                                )}
+                            <p className="text-xs text-slate-500">Gemini 2.5 • RAG Enabled</p>
+                            {/* GEER Status Badge */}
+                            {rgcnStatus === 'active' && (
+                                <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-green-500 text-green-600">
+                                    <div className="h-1.5 w-1.5 rounded-full bg-green-500 mr-1 animate-pulse" />
+                                    GEER
+                                </Badge>
+                            )}
+                            {rgcnStatus === 'inactive' && (
+                                <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-slate-300 text-slate-400">
+                                    <div className="h-1.5 w-1.5 rounded-full bg-slate-300 mr-1" />
+                                    GEER Offline
+                                </Badge>
+                            )}
                             </div>
                         </div>
                     </div>
                     <div className="flex items-center gap-4">
-                      {/* REEE Toggle */}
+                      {/* GEER Toggle */}
                       <div className="flex items-center gap-2">
-                        <span className="text-xs text-slate-500 hidden sm:inline">REEE Retrieval</span>
+                        <span className="text-xs text-slate-500 hidden sm:inline">GEER Retrieval</span>
                         <button
                           type="button"
                           onClick={() => setUseRGCN((prev) => !prev)}
@@ -1495,7 +1495,7 @@ const App = () => {
                             useRGCN ? "bg-purple-500" : "bg-slate-300"
                           )}
                           aria-pressed={useRGCN}
-                          aria-label="Toggle REEE retrieval"
+                          aria-label="Toggle GEER retrieval"
                         >
                           <span
                             className={cn(
@@ -1579,18 +1579,18 @@ const App = () => {
                                                 <summary className="list-none text-slate-400 hover:text-blue-600 cursor-pointer flex items-center gap-1 font-medium select-none">
                                                     <Search size={10} />
                                                     View Sources
-                                                    {/* Show REEE indicator */}
+                                                    {/* Show GEER indicator */}
                                                     {msg.metadata?.rgcnUsed && (
                                                         <Badge variant="outline" className="ml-2 text-[9px] px-1 border-purple-300 text-purple-600">
-                                                            REEE Enhanced
+                                                            GEER Enhanced
                                                         </Badge>
                                                     )}
                                                 </summary>
-                                                <div className="mt-2 p-3 bg-slate-50 rounded-lg border border-slate-100 text-slate-500 space-y-2 animate-in fade-in zoom-in-95 duration-200">
-                                                    {/* Show REEE similarity scores if available */}
+                                                    <div className="mt-2 p-3 bg-slate-50 rounded-lg border border-slate-100 text-slate-500 space-y-2 animate-in fade-in zoom-in-95 duration-200">
+                                                    {/* Show GEER similarity scores if available */}
                                                     {msg.metadata?.rgcnSimilarities && msg.metadata.rgcnSimilarities.length > 0 && (
                                                         <div className="mb-2 pb-2 border-b border-slate-200">
-                                                            <p className="text-[10px] font-semibold text-purple-600 mb-1">REEE Similarity Scores:</p>
+                                                            <p className="text-[10px] font-semibold text-purple-600 mb-1">GEER Similarity Scores:</p>
                                                             {msg.metadata.rgcnSimilarities.map((sim: any, i: number) => (
                                                                 <div key={i} className="text-[10px] flex justify-between">
                                                                     <span className="truncate">{sim.entity}</span>

@@ -13,10 +13,10 @@ Vercel Deployment:
 
 External Services:
 ├── Neo4j Aura → Cloud Database
-└── REEE Service (Render.com) → Python ML Service (R-GCN encoder for graph embeddings)
+└── GEER Service (Render.com) → Python ML Service (R-GCN encoder for graph embeddings)
 ```
 
-**Note**: The REEE Python service (which uses an R-GCN model to produce graph embeddings) is hosted separately on Render.com because Vercel serverless functions are not suitable for long-running Python services with heavy ML dependencies (PyTorch). The Node.js backend on Vercel connects to the Render-hosted REEE service via the `PYTHON_RGCN_URL` environment variable.
+**Note**: The GEER Python service (which uses an R-GCN model to produce graph embeddings) is hosted separately on Render.com because Vercel serverless functions are not suitable for long-running Python services with heavy ML dependencies (PyTorch). The Node.js backend on Vercel connects to the Render-hosted GEER service via the `PYTHON_RGCN_URL` environment variable.
 
 ## Prerequisites
 
@@ -145,9 +145,9 @@ Note the protocol difference: `bolt://` vs `neo4j+s://`
 - Consider splitting large operations
 - Or use Render/Railway for backend instead
 
-## REEE / R-GCN Embedding Service Deployment
+## GEER / R-GCN Embedding Service Deployment
 
-The REEE Python service (which exposes R-GCN embeddings) must be deployed separately on Render.com:
+The GEER Python service (which exposes R-GCN embeddings) must be deployed separately on Render.com:
 
 ### Why Separate Hosting?
 
@@ -157,7 +157,7 @@ The REEE Python service (which exposes R-GCN embeddings) must be deployed separa
 
 ### Deployment Steps
 
-1. **Deploy REEE to Render**:
+1. **Deploy GEER to Render**:
    - Create a Web Service on Render.com
    - Set root directory to `backend/python-rgcn`
    - Configure environment variables (Neo4j connection, etc.)
@@ -170,7 +170,7 @@ The REEE Python service (which exposes R-GCN embeddings) must be deployed separa
 
 3. **Verify**:
    - Check Render service health endpoint
-   - Verify frontend shows the REEE badge
+   - Verify frontend shows the GEER badge
    - Test chat functionality
 
 ## Alternative: Separate Backend Hosting
@@ -195,7 +195,7 @@ Similar to Render, good free tier
 - **Vercel Frontend**: Free (Hobby plan)
 - **Vercel Serverless**: Free (with limits)
 - **Neo4j Aura**: Free tier available
-- **Render REEE Service**: Free tier available (spins down after inactivity)
+- **Render GEER Service**: Free tier available (spins down after inactivity)
 - **Total**: $0/month (with free tiers)
 
 **Note**: Render free tier spins down after 15 minutes of inactivity, causing a ~30 second cold start on first request. Consider upgrading to Starter plan ($7/month) for always-on service in production.
